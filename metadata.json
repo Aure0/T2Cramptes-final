@@ -1,0 +1,8 @@
+{
+  "name": "Remix T2C Clermont-Ferrand Live Transit",
+  "description": "Real-time traffic map and live station arrival times for the T2C Clermont-Ferrand public transit network (Lines A, B, C and full network).",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

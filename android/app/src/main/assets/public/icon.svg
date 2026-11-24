@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="70%">
+      <stop offset="0%" stop-color="#152036" />
+      <stop offset="100%" stop-color="#0B0F17" />
+    </radialGradient>
+    <linearGradient id="cab" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F8FAFC" />
+      <stop offset="100%" stop-color="#CBD5E1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Full-bleed dark control-room canvas -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+
+  <!-- Subtle T2C network corridor accents (Lines A, B, C) -->
+  <path d="M56 356 L176 236 L342 236 L456 122" fill="none" stroke="#E30613" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" opacity="0.92" />
+  <path d="M56 276 L456 276" fill="none" stroke="#0EA5E9" stroke-width="14" stroke-linecap="round" opacity="0.72" />
+  <path d="M96 412 L226 282 L432 282" fill="none" stroke="#10B981" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.62" />
+
+  <!-- Central elevated transit emblem -->
+  <rect x="136" y="106" width="240" height="276" rx="52" fill="#0F172A" stroke="#334155" stroke-width="10" />
+
+  <!-- Pantograph / roof bar -->
+  <line x1="208" y1="138" x2="304" y2="138" stroke="#E30613" stroke-width="12" stroke-linecap="round" />
+
+  <!-- Tram body silhouette -->
+  <rect x="172" y="162" width="168" height="172" rx="30" fill="url(#cab)" />
+
+  <!-- Panoramic windshield -->
+  <rect x="192" y="182" width="128" height="72" rx="14" fill="#0B1120" />
+  <rect x="206" y="194" width="60" height="10" rx="5" fill="#38BDF8" opacity="0.85" />
+
+  <!-- Dual LED headlights -->
+  <circle cx="208" cy="292" r="14" fill="#0B1120" />
+  <circle cx="208" cy="292" r="8" fill="#38BDF8" />
+  <circle cx="304" cy="292" r="14" fill="#0B1120" />
+  <circle cx="304" cy="292" r="8" fill="#38BDF8" />
+
+  <!-- Line A center destination bar -->
+  <rect x="234" y="284" width="44" height="16" rx="8" fill="#E30613" />
+
+  <!-- Rail guides below emblem -->
+  <line x1="194" y1="402" x2="174" y2="440" stroke="#94A3B8" stroke-width="14" stroke-linecap="round" />
+  <line x1="318" y1="402" x2="338" y2="440" stroke="#94A3B8" stroke-width="14" stroke-linecap="round" />
+  <line x1="188" y1="422" x2="324" y2="422" stroke="#475569" stroke-width="10" stroke-linecap="round" />
+
+  <!-- Live status indicator dot -->
+  <circle cx="384" cy="128" r="26" fill="#0B0F17" />
+  <circle cx="384" cy="128" r="16" fill="#10B981" />
+</svg>

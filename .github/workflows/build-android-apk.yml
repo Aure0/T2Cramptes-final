@@ -1,0 +1,84 @@
+name: Build Android APK (T2Cramptés)
+
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Java 21 for Android Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install npm dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build static transit bundle & sync Capacitor Android project
+        env:
+          VITE_BASE_PATH: './'
+          VITE_STATIC_MODE: 'true'
+          VITE_GITHUB_REPO: ${{ github.repository }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_ANDROID_APK_URL: ${{ vars.VITE_ANDROID_APK_URL }}
+        run: npm run build:android
+
+      - name: Assemble Android Debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Prepare versioned & stable APK filename
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk T2Cramptes-latest.apk
+
+      - name: Upload downloadable Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: T2Cramptes-android-apk
+          path: T2Cramptes-latest.apk
+          retention-days: 30
+
+      - name: Publish latest APK to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="latest"
+          TITLE="T2Cramptés — Latest Android APK"
+          BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          SHORT_SHA="${GITHUB_SHA::7}"
+          NOTES="Latest compiled Android APK for **T2Cramptés** (commit \`${SHORT_SHA}\`, built ${BUILD_DATE}).
+
+          ### How to install on Android
+          1. Download **\`T2Cramptes-latest.apk\`** below on your Android phone.
+          2. Open the downloaded file and allow installation from your browser if prompted.
+          3. Launch **T2Cramptés** from your app drawer."
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            git tag -f "$TAG" "$GITHUB_SHA"
+            git push -f origin "refs/tags/$TAG"
+            gh release upload "$TAG" T2Cramptes-latest.apk --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" T2Cramptes-latest.apk \
+              --target "$GITHUB_SHA" \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --latest
+          fi
