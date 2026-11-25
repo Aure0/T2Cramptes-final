@@ -1,51 +1,107 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <radialGradient id="bg" cx="50%" cy="38%" r="70%">
-      <stop offset="0%" stop-color="#152036" />
-      <stop offset="100%" stop-color="#0B0F17" />
-    </radialGradient>
-    <linearGradient id="cab" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#F8FAFC" />
-      <stop offset="100%" stop-color="#CBD5E1" />
+    <!-- Official T2C Clermont-Ferrand Crimson (#AB161B) architectural backdrop -->
+    <linearGradient id="t2c-bg" x1="12%" y1="6%" x2="88%" y2="94%">
+      <stop offset="0%" stop-color="#C41C22" />
+      <stop offset="52%" stop-color="#AB161B" />
+      <stop offset="100%" stop-color="#7B0D11" />
     </linearGradient>
+
+    <!-- Subtle radial top sheen for optical richness -->
+    <radialGradient id="t2c-glow" cx="35%" cy="22%" r="65%">
+      <stop offset="0%" stop-color="#FF6B6F" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#AB161B" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Pure white sculpted tramway cab gradient -->
+    <linearGradient id="tram-cab" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#E8ECEF" />
+    </linearGradient>
+
+    <!-- Deep Volvic charcoal windshield -->
+    <linearGradient id="windshield" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#272A30" />
+      <stop offset="100%" stop-color="#141519" />
+    </linearGradient>
+
+    <filter id="cab-shadow" x="-15%" y="-12%" width="130%" height="135%">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#3E0507" flood-opacity="0.45" />
+    </filter>
   </defs>
 
-  <!-- Full-bleed dark control-room canvas -->
-  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <!-- Full-bleed T2C Crimson squircle canvas -->
+  <rect width="512" height="512" rx="112" fill="url(#t2c-bg)" />
+  <rect width="512" height="512" rx="112" fill="url(#t2c-glow)" />
 
-  <!-- Subtle T2C network corridor accents (Lines A, B, C) -->
-  <path d="M56 356 L176 236 L342 236 L456 122" fill="none" stroke="#E30613" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" opacity="0.92" />
-  <path d="M56 276 L456 276" fill="none" stroke="#0EA5E9" stroke-width="14" stroke-linecap="round" opacity="0.72" />
-  <path d="M96 412 L226 282 L432 282" fill="none" stroke="#10B981" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.62" />
+  <!-- Subtle diagonal Tramway A corridor geometry -->
+  <path
+    d="M -20 374 L 172 192 L 340 192 L 532 10"
+    fill="none"
+    stroke="#57080B"
+    stroke-width="64"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.34"
+  />
+  <path
+    d="M -20 374 L 172 192 L 340 192 L 532 10"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.16"
+  />
 
-  <!-- Central elevated transit emblem -->
-  <rect x="136" y="106" width="240" height="276" rx="52" fill="#0F172A" stroke="#334155" stroke-width="10" />
+  <!-- Twin perspective rails + Clermont Translohr central guide rail -->
+  <line x1="196" y1="364" x2="152" y2="438" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" opacity="0.92" />
+  <line x1="316" y1="364" x2="360" y2="438" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" opacity="0.92" />
+  <line x1="256" y1="366" x2="256" y2="432" stroke="#1A1B1F" stroke-width="12" stroke-linecap="round" opacity="0.55" />
+  <line x1="256" y1="366" x2="256" y2="430" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity="0.72" />
+  <line x1="176" y1="406" x2="336" y2="406" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.45" />
 
-  <!-- Pantograph / roof bar -->
-  <line x1="208" y1="138" x2="304" y2="138" stroke="#E30613" stroke-width="12" stroke-linecap="round" />
+  <!-- Roof pantograph collector bar -->
+  <line x1="210" y1="86" x2="302" y2="86" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" opacity="0.95" />
+  <line x1="234" y1="86" x2="256" y2="112" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.82" />
+  <line x1="278" y1="86" x2="256" y2="112" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" opacity="0.82" />
 
-  <!-- Tram body silhouette -->
-  <rect x="172" y="162" width="168" height="172" rx="30" fill="url(#cab)" />
+  <!-- Central Sculpted Tramway Cab (Pure White + Volvic Charcoal + T2C Crimson) -->
+  <g filter="url(#cab-shadow)">
+    <!-- Outer Volvic charcoal precision chassis rim -->
+    <rect x="136" y="114" width="240" height="252" rx="56" fill="#1A1B1F" />
+    <!-- Pure white sculpted tram body -->
+    <rect x="148" y="126" width="216" height="228" rx="46" fill="url(#tram-cab)" />
+  </g>
 
-  <!-- Panoramic windshield -->
-  <rect x="192" y="182" width="128" height="72" rx="14" fill="#0B1120" />
-  <rect x="206" y="194" width="60" height="10" rx="5" fill="#38BDF8" opacity="0.85" />
+  <!-- Destination sign pill in Volvic Charcoal -->
+  <rect x="210" y="142" width="92" height="18" rx="9" fill="#1A1B1F" />
+  <rect x="228" y="147" width="56" height="8" rx="4" fill="#AB161B" />
 
-  <!-- Dual LED headlights -->
-  <circle cx="208" cy="292" r="14" fill="#0B1120" />
-  <circle cx="208" cy="292" r="8" fill="#38BDF8" />
-  <circle cx="304" cy="292" r="14" fill="#0B1120" />
-  <circle cx="304" cy="292" r="8" fill="#38BDF8" />
+  <!-- Panoramic Volvic Charcoal Windshield -->
+  <rect x="172" y="172" width="168" height="92" rx="22" fill="url(#windshield)" />
+  <!-- Crisp architectural glass reflection -->
+  <path
+    d="M 192 246 L 242 184 L 264 184 L 214 246 Z"
+    fill="#FFFFFF"
+    opacity="0.16"
+  />
+  <path
+    d="M 232 246 L 274 194 L 285 194 L 243 246 Z"
+    fill="#FFFFFF"
+    opacity="0.09"
+  />
 
-  <!-- Line A center destination bar -->
-  <rect x="234" y="284" width="44" height="16" rx="8" fill="#E30613" />
+  <!-- Signature T2C Crimson front livery band -->
+  <rect x="148" y="278" width="216" height="20" fill="#AB161B" />
 
-  <!-- Rail guides below emblem -->
-  <line x1="194" y1="402" x2="174" y2="440" stroke="#94A3B8" stroke-width="14" stroke-linecap="round" />
-  <line x1="318" y1="402" x2="338" y2="440" stroke="#94A3B8" stroke-width="14" stroke-linecap="round" />
-  <line x1="188" y1="422" x2="324" y2="422" stroke="#475569" stroke-width="10" stroke-linecap="round" />
+  <!-- Dual crisp headlights + Volvic center bumper emblem -->
+  <circle cx="192" cy="322" r="17" fill="#1A1B1F" />
+  <circle cx="192" cy="322" r="9.5" fill="#FFFFFF" />
+  <circle cx="320" cy="322" r="17" fill="#1A1B1F" />
+  <circle cx="320" cy="322" r="9.5" fill="#FFFFFF" />
 
-  <!-- Live status indicator dot -->
-  <circle cx="384" cy="128" r="26" fill="#0B0F17" />
-  <circle cx="384" cy="128" r="16" fill="#10B981" />
+  <!-- Center T2C Crimson badge bar -->
+  <rect x="228" y="313" width="56" height="18" rx="9" fill="#AB161B" />
+  <rect x="242" y="319" width="28" height="6" rx="3" fill="#FFFFFF" opacity="0.92" />
 </svg>

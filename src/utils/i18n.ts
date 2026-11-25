@@ -244,10 +244,10 @@ const en = {
   'map.zoomInAria': 'Zoom in',
   'map.zoomOutAria': 'Zoom out',
   'map.recenterAria': 'Recenter on Clermont-Ferrand',
-  'map.switchToStreetAria': 'Switch basemap to OpenFreeMap Street',
-  'map.switchToDarkAria': 'Switch basemap to OpenFreeMap Dark',
-  'map.basemapDarkLabel': 'OpenFreeMap Dark (Vector)',
-  'map.basemapStreetLabel': 'OpenFreeMap Street (Vector)',
+  'map.switchToStreetAria': 'Switch basemap to Light Street Map',
+  'map.switchToDarkAria': 'Switch basemap to Dark Vector Map',
+  'map.basemapDarkLabel': 'Dark Map (Vector)',
+  'map.basemapStreetLabel': 'Light Street Map (Vector)',
   'map.basemapTitle': 'Basemap: {label} (Press M)',
   'map.hideStopsAria': 'Hide station markers',
   'map.showStopsAria': 'Show station markers',
@@ -452,7 +452,7 @@ const fr: Record<TranslationKey, string> = {
   'sidebar.tabLiveTitle': 'Véhicules en circulation (Touche 3)',
   'sidebar.presetsLabel': 'Sélections rapides',
   'sidebar.presetCore': 'A · B · C',
-  'sidebar.presetFull': 'Tout le réseau',
+  'sidebar.presetFull': 'Complet',
   'sidebar.presetClear': 'Effacer',
   'sidebar.tierAll': 'Toutes',
   'sidebar.tierLocal': 'Locales',
@@ -565,10 +565,10 @@ const fr: Record<TranslationKey, string> = {
   'map.zoomInAria': 'Zoomer',
   'map.zoomOutAria': 'Dézoomer',
   'map.recenterAria': 'Recentrer sur Clermont-Ferrand',
-  'map.switchToStreetAria': 'Passer au fond de carte OpenFreeMap Clair',
-  'map.switchToDarkAria': 'Passer au fond de carte OpenFreeMap Sombre',
-  'map.basemapDarkLabel': 'OpenFreeMap Sombre (Vecteur)',
-  'map.basemapStreetLabel': 'OpenFreeMap Clair (Vecteur)',
+  'map.switchToStreetAria': 'Passer au fond de carte Clair',
+  'map.switchToDarkAria': 'Passer au fond de carte Sombre',
+  'map.basemapDarkLabel': 'Carte Sombre (Vecteur)',
+  'map.basemapStreetLabel': 'Carte Claire (Vecteur)',
   'map.basemapTitle': 'Fond de carte : {label} (Touche M)',
   'map.hideStopsAria': 'Masquer les arrêts',
   'map.showStopsAria': 'Afficher les arrêts',
@@ -817,26 +817,44 @@ export function localizeServiceAlertText(
   return { sourceLabel, headerText, paragraphs };
 }
 
+const ALERT_FEED_SOURCE_FR: Record<string, string> = {
+  'GTFS-RT ServiceAlerts + T2C SIV': 'GTFS-RT ServiceAlerts + SIV T2C',
+  'T2C ServiceAlerts (SIV + GTFS-RT)': 'Infos trafic T2C (SIV + GTFS-RT)',
+  'T2C ServiceAlerts (Snapshot)': 'Infos trafic T2C (instantané)',
+};
+
+export function localizeAlertFeedSource(feedSource: string, locale: AppLocale): string {
+  if (locale !== 'fr') return feedSource;
+  return ALERT_FEED_SOURCE_FR[feedSource] ?? feedSource;
+}
+
+const PUNCTUALITY_TOKEN_FR: Record<string, string> = {
+  Mon: 'Lun',
+  Tue: 'Mar',
+  Wed: 'Mer',
+  Thu: 'Jeu',
+  Fri: 'Ven',
+  Sat: 'Sam',
+  Sun: 'Dim',
+  Jan: 'Janv.',
+  Feb: 'Fév.',
+  Mar: 'Mars',
+  Apr: 'Avr.',
+  May: 'Mai',
+  Jun: 'Juin',
+  Jul: 'Juil.',
+  Aug: 'Août',
+  Sep: 'Sept.',
+  Oct: 'Oct.',
+  Nov: 'Nov.',
+  Dec: 'Déc.',
+};
+
+const PUNCTUALITY_TOKEN_REGEX = /\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/g;
+
 export function localizePunctualityLabel(label: string, locale: AppLocale): string {
   if (locale !== 'fr') return label;
   if (label === 'Now') return TRANSLATIONS.fr['punctuality.nowBucket'];
-  // Translate common short English weekday/month abbreviations produced by server/shared bucket generator
-  return label
-    .replace(/\bMon\b/g, 'Lun')
-    .replace(/\bTue\b/g, 'Mar')
-    .replace(/\bWed\b/g, 'Mer')
-    .replace(/\bThu\b/g, 'Jeu')
-    .replace(/\bFri\b/g, 'Ven')
-    .replace(/\bSat\b/g, 'Sam')
-    .replace(/\bSun\b/g, 'Dim')
-    .replace(/\bJan\b/g, 'Janv.')
-    .replace(/\bFeb\b/g, 'Fév.')
-    .replace(/\bMar\b/g, 'Mars')
-    .replace(/\bApr\b/g, 'Avr.')
-    .replace(/\bMay\b/g, 'Mai')
-    .replace(/\bJun\b/g, 'Juin')
-    .replace(/\bJul\b/g, 'Juil.')
-    .replace(/\bAug\b/g, 'Août')
-    .replace(/\bSep\b/g, 'Sept.')
-    .replace(/\bDec\b/g, 'Déc.');
+  // Single-pass replacement so weekday "Tue" -> "Mar" is never re-matched as month "Mar" -> "Mars"
+  return label.replace(PUNCTUALITY_TOKEN_REGEX, (token) => PUNCTUALITY_TOKEN_FR[token] ?? token);
 }

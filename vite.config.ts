@@ -116,18 +116,34 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /^https:\/\/tiles\.openfreemap\.org\/.*/i,
-              handler: 'StaleWhileRevalidate',
+              urlPattern:
+                /^https:\/\/(basemaps\.cartocdn\.com\/gl\/.*|tiles\.openfreemap\.org\/(styles\/.*|planet|backup_planet))$/i,
+              handler: 'NetworkFirst',
               options: {
-                cacheName: 'openfreemap-vector-tiles',
+                cacheName: 'basemap-styles-v2',
+                networkTimeoutSeconds: 4,
                 expiration: {
-                  maxEntries: 200,
+                  maxEntries: 12,
+                  maxAgeSeconds: 60 * 60,
+                },
+                cacheableResponse: {statuses: [200]},
+              },
+            },
+            {
+              urlPattern:
+                /^https:\/\/([a-d]\.basemaps\.cartocdn\.com|tiles\.basemaps\.cartocdn\.com|tiles\.openfreemap\.org\/(planet\/|backup_planet\/|fonts\/|sprites\/|natural_earth\/)).*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'basemap-tiles-v2',
+                expiration: {
+                  maxEntries: 250,
                   maxAgeSeconds: 60 * 60 * 24 * 7,
                 },
-                cacheableResponse: {statuses: [0, 200]},
+                cacheableResponse: {statuses: [200]},
               },
             },
           ],
+          cleanupOutdatedCaches: true,
         },
         devOptions: {
           enabled: true,

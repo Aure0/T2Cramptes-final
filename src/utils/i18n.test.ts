@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   detectBestLocale,
+  localizeAlertFeedSource,
   localizeAlertLinkLabel,
   localizePunctualityLabel,
   localizeRevisionSummary,
@@ -176,8 +177,22 @@ test('French formatters produce idiomatic transit, health, alert, and punctualit
   assert.match(localizedDelay.paragraphs[0], /^4 véhicules actifs sur 12 de la ligne A/);
   assert.match(localizedDelay.paragraphs[1], /\+5 min.*\+9 min/);
 
+  assert.equal(
+    localizeAlertFeedSource('T2C ServiceAlerts (SIV + GTFS-RT)', 'fr'),
+    'Infos trafic T2C (SIV + GTFS-RT)'
+  );
+  assert.equal(
+    localizeAlertFeedSource('T2C ServiceAlerts (Snapshot)', 'fr'),
+    'Infos trafic T2C (instantané)'
+  );
+  assert.equal(
+    localizeAlertFeedSource('T2C ServiceAlerts (SIV + GTFS-RT)', 'en'),
+    'T2C ServiceAlerts (SIV + GTFS-RT)'
+  );
+
   assert.equal(localizePunctualityLabel('Now', 'fr'), 'Actuel');
   assert.equal(localizePunctualityLabel('Mon 12', 'fr'), 'Lun 12');
+  assert.equal(localizePunctualityLabel('Tue 12', 'fr'), 'Mar 12');
   assert.equal(localizePunctualityLabel('14 Jan', 'fr'), '14 Janv.');
   assert.equal(localizePunctualityLabel('Mar 26', 'fr'), 'Mars 26');
   assert.equal(localizePunctualityLabel('Sep 26', 'fr'), 'Sept. 26');

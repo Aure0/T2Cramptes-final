@@ -67,7 +67,7 @@ if (!self.define) {
     });
   };
 }
-define(['./workbox-b1bafff1'], (function (workbox) { 'use strict';
+define(['./workbox-53feb3a3'], (function (workbox) { 'use strict';
 
   self.skipWaiting();
   workbox.clientsClaim();
@@ -78,7 +78,7 @@ define(['./workbox-b1bafff1'], (function (workbox) { 'use strict';
    */
   workbox.precacheAndRoute([{
     "url": "index.html",
-    "revision": "0.v2bbtmv0a5o"
+    "revision": "0.oibr15lqjq8"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
@@ -112,13 +112,23 @@ define(['./workbox-b1bafff1'], (function (workbox) { 'use strict';
       statuses: [0, 200]
     })]
   }), 'GET');
-  workbox.registerRoute(/^https:\/\/tiles\.openfreemap\.org\/.*/i, new workbox.StaleWhileRevalidate({
-    "cacheName": "openfreemap-vector-tiles",
+  workbox.registerRoute(/^https:\/\/(basemaps\.cartocdn\.com\/gl\/.*|tiles\.openfreemap\.org\/(styles\/.*|planet|backup_planet))$/i, new workbox.NetworkFirst({
+    "cacheName": "basemap-styles-v2",
+    "networkTimeoutSeconds": 4,
     plugins: [new workbox.ExpirationPlugin({
-      maxEntries: 200,
+      maxEntries: 12,
+      maxAgeSeconds: 3600
+    }), new workbox.CacheableResponsePlugin({
+      statuses: [200]
+    })]
+  }), 'GET');
+  workbox.registerRoute(/^https:\/\/([a-d]\.basemaps\.cartocdn\.com|tiles\.basemaps\.cartocdn\.com|tiles\.openfreemap\.org\/(planet\/|backup_planet\/|fonts\/|sprites\/|natural_earth\/)).*/i, new workbox.CacheFirst({
+    "cacheName": "basemap-tiles-v2",
+    plugins: [new workbox.ExpirationPlugin({
+      maxEntries: 250,
       maxAgeSeconds: 604800
     }), new workbox.CacheableResponsePlugin({
-      statuses: [0, 200]
+      statuses: [200]
     })]
   }), 'GET');
 

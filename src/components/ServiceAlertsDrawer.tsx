@@ -32,6 +32,7 @@ import {
 } from '../utils/alertsMath';
 import { useI18n } from '../contexts/I18nContext';
 import {
+  localizeAlertFeedSource,
   localizeAlertLinkLabel,
   localizeRevisionSummary,
   localizeServiceAlertText,
@@ -259,7 +260,7 @@ export const ServiceAlertsDrawer: React.FC<ServiceAlertsDrawerProps> = React.mem
             <p className="text-[11px] text-slate-400 mt-0.5 truncate">
               {alertsData
                 ? t('alerts.subtitleUpdated', {
-                    source: alertsData.feedSource,
+                    source: localizeAlertFeedSource(alertsData.feedSource, locale),
                     time: formatParisDateTime(alertsData.feedTimestamp, locale),
                   })
                 : t('alerts.connecting')}

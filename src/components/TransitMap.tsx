@@ -39,6 +39,12 @@ import {
   buildStackedCorridorFeatures,
 } from '../utils/routeCorridorMath';
 import {
+  classifyMapLibreError,
+  getBasemapStyleChain,
+  shouldAdvanceBasemapProvider,
+  styleSupportsGlyphLabels,
+} from '../utils/mapStyleFallback';
+import {
   computeSegmentProgress,
   formatShortStationLabel,
   interpolateAlongPath,
@@ -63,16 +69,7 @@ if (import.meta.env.PROD && typeof window !== 'undefined') {
 export const CLERMONT_CENTER: LatLngPoint = { lat: 45.7772, lng: 3.087 };
 const DEFAULT_ZOOM = 12.2;
 
-const VECTOR_STYLES: Record<BasemapStyle, { url: string; label: string }> = {
-  dark: {
-    url: 'https://tiles.openfreemap.org/styles/dark',
-    label: 'OpenFreeMap Dark (Vector)',
-  },
-  liberty: {
-    url: 'https://tiles.openfreemap.org/styles/liberty',
-    label: 'OpenFreeMap Street (Vector)',
-  },
-};
+const BASEMAP_WATCHDOG_MS = 6500;
 
 const ROUTES_SOURCE_ID = 't2c-routes-source';
 const ROUTES_CASING_LAYER_ID = 't2c-routes-casing';
@@ -97,28 +94,35 @@ interface HoveredRouteTooltipState {
 }
 
 /**
- * Inspects the active MapLibre basemap style to reuse a verified glyph font stack,
- * avoiding 404 glyph requests across OpenFreeMap Dark and Liberty vector styles.
+ * Inspects the active MapLibre basemap style to reuse a verified upright glyph font stack,
+ * avoiding 404 glyph requests and italic station labels across CARTO and OpenFreeMap styles.
  */
 function resolveBasemapTextFont(map: maplibregl.Map): string[] {
   const layers = map.getStyle()?.layers || [];
+  let fallbackStack: string[] | null = null;
   for (const layer of layers) {
     if (layer.type !== 'symbol') continue;
     const layout = (layer as { layout?: Record<string, unknown> }).layout;
     const tf = layout?.['text-font'];
+    let candidate: string[] | null = null;
     if (Array.isArray(tf) && tf.length > 0 && typeof tf[0] === 'string' && tf[0] !== 'literal') {
-      return tf as string[];
-    }
-    if (
+      candidate = tf as string[];
+    } else if (
       Array.isArray(tf) &&
       tf[0] === 'literal' &&
       Array.isArray(tf[1]) &&
       typeof tf[1][0] === 'string'
     ) {
-      return tf[1] as string[];
+      candidate = tf[1] as string[];
+    }
+    if (!candidate) continue;
+    if (!fallbackStack) fallbackStack = candidate;
+    // Prefer an upright (non-italic) font stack for crisp stop names
+    if (!/italic/i.test(candidate[0])) {
+      return candidate;
     }
   }
-  return ['Noto Sans Regular'];
+  return fallbackStack ?? ['Noto Sans Regular'];
 }
 
 interface TransitMapProps {
@@ -280,6 +284,15 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
   const pausedClockSecRef = useRef<number | null>(null);
   const isUserInteractingRef = useRef<boolean>(false);
   const hoveringStationRef = useRef<boolean>(false);
+  const styleLoadedRef = useRef<boolean>(false);
+  const providerIndexRef = useRef<number>(0);
+  const loadedBasemapTilesRef = useRef<number>(0);
+  const consecutiveTileErrorsRef = useRef<number>(0);
+  const styleWatchdogTimerRef = useRef<number | null>(null);
+  const appliedBasemapRef = useRef<BasemapStyle>(basemap);
+  const activeStyleUrlRef = useRef<string | null>(
+    getBasemapStyleChain(basemap)[0]?.styleUrl ?? null
+  );
 
   const routesById = useMemo(() => {
     const rec: Record<string, TransitRoute> = {};
@@ -336,14 +349,27 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
   const getAnimationClockSec = () =>
     pausedClockSecRef.current ?? Date.now() / 1000 + serverClockOffsetRef.current;
 
-  // Mount high-DPI vector MapLibre GL map once
+  // Mount high-DPI vector MapLibre GL map once with automatic multi-provider failover
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
+    // Proactively purge any legacy stale OpenFreeMap SW cache bucket from earlier versions
+    if (typeof window !== 'undefined' && 'caches' in window) {
+      window.caches.delete('openfreemap-vector-tiles').catch(() => {});
+    }
+
+    const initialChain = getBasemapStyleChain(initialBasemapRef.current);
+    const initialProvider = initialChain[0];
+    providerIndexRef.current = 0;
+    styleLoadedRef.current = false;
+    loadedBasemapTilesRef.current = 0;
+    consecutiveTileErrorsRef.current = 0;
+    activeStyleUrlRef.current = initialProvider.styleUrl;
+
     const map = new maplibregl.Map({
       container: el,
-      style: VECTOR_STYLES[initialBasemapRef.current].url,
+      style: initialProvider.style,
       center: [CLERMONT_CENTER.lng, CLERMONT_CENTER.lat],
       zoom: DEFAULT_ZOOM,
       minZoom: 9.5,
@@ -363,6 +389,54 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
       }),
       'bottom-left'
     );
+
+    const clearWatchdog = () => {
+      if (styleWatchdogTimerRef.current !== null) {
+        window.clearTimeout(styleWatchdogTimerRef.current);
+        styleWatchdogTimerRef.current = null;
+      }
+    };
+
+    const applyProviderTier = (theme: BasemapStyle, nextIndex: number) => {
+      const chain = getBasemapStyleChain(theme);
+      const clampedIndex = Math.max(0, Math.min(nextIndex, chain.length - 1));
+      const candidate = chain[clampedIndex];
+      clearWatchdog();
+      providerIndexRef.current = clampedIndex;
+      styleLoadedRef.current = false;
+      loadedBasemapTilesRef.current = 0;
+      consecutiveTileErrorsRef.current = 0;
+      activeStyleUrlRef.current = candidate.styleUrl;
+      setStyleRevision(0);
+      map.setStyle(candidate.style);
+
+      if (candidate.expectsRemoteTiles && clampedIndex < chain.length - 1) {
+        styleWatchdogTimerRef.current = window.setTimeout(() => {
+          styleWatchdogTimerRef.current = null;
+          if (
+            providerIndexRef.current === clampedIndex &&
+            loadedBasemapTilesRef.current === 0 &&
+            (!styleLoadedRef.current || consecutiveTileErrorsRef.current > 0)
+          ) {
+            applyProviderTier(appliedBasemapRef.current, clampedIndex + 1);
+          }
+        }, BASEMAP_WATCHDOG_MS);
+      }
+    };
+
+    // Start watchdog for initial remote vector basemap so a hanging/black CDN fails over automatically
+    if (initialProvider.expectsRemoteTiles && initialChain.length > 1) {
+      styleWatchdogTimerRef.current = window.setTimeout(() => {
+        styleWatchdogTimerRef.current = null;
+        if (
+          providerIndexRef.current === 0 &&
+          loadedBasemapTilesRef.current === 0 &&
+          (!styleLoadedRef.current || consecutiveTileErrorsRef.current > 0)
+        ) {
+          applyProviderTier(appliedBasemapRef.current, 1);
+        }
+      }, BASEMAP_WATCHDOG_MS);
+    }
 
     const syncViewport = () => {
       const c = map.getCenter();
@@ -385,8 +459,63 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     };
 
     const handleStyleLoad = () => {
+      styleLoadedRef.current = true;
       setStyleRevision((r) => r + 1);
       syncViewport();
+    };
+
+    const handleSourceData = (e: {
+      sourceId?: string;
+      dataType?: string;
+      isSourceLoaded?: boolean;
+      tile?: { state?: string };
+    }) => {
+      if (!e.sourceId || e.sourceId.startsWith('t2c-')) return;
+      if (e.tile && (e.tile.state === 'loaded' || e.isSourceLoaded)) {
+        loadedBasemapTilesRef.current += 1;
+        consecutiveTileErrorsRef.current = 0;
+        clearWatchdog();
+      }
+    };
+
+    const handleMapError = (e: { error?: unknown }) => {
+      const chain = getBasemapStyleChain(appliedBasemapRef.current);
+      const category = classifyMapLibreError(e?.error, activeStyleUrlRef.current);
+
+      if (category === 'source-or-tile') {
+        consecutiveTileErrorsRef.current += 1;
+      }
+
+      if (
+        shouldAdvanceBasemapProvider({
+          category,
+          loadedBasemapTiles: loadedBasemapTilesRef.current,
+          consecutiveTileErrors: consecutiveTileErrorsRef.current,
+          providerIndex: providerIndexRef.current,
+          chainLength: chain.length,
+        })
+      ) {
+        applyProviderTier(appliedBasemapRef.current, providerIndexRef.current + 1);
+        return;
+      }
+
+      if (
+        category === 'style-load' ||
+        category === 'source-or-tile' ||
+        category === 'network-transient'
+      ) {
+        // Silently absorb transient tile/font/sprite network errors instead of letting MapLibre log console.error
+        return;
+      }
+
+      if (e?.error) {
+        console.warn('[T2Cramptés Map]', e.error);
+      }
+    };
+
+    const handleOnlineRecovery = () => {
+      if (providerIndexRef.current === 0) return;
+      applyProviderTier(appliedBasemapRef.current, 0);
     };
 
     const handleMissingStyleImage = (e: { id: string }) => {
@@ -398,6 +527,8 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
       });
     };
 
+    map.on('error', handleMapError);
+    map.on('sourcedata', handleSourceData);
     map.on('style.load', handleStyleLoad);
     map.on('load', handleStyleLoad);
     map.on('styleimagemissing', handleMissingStyleImage);
@@ -408,6 +539,7 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     map.on('dragend', handleUserInteractEnd);
     map.on('zoomstart', handleUserInteractStart);
     map.on('zoomend', handleUserInteractEnd);
+    window.addEventListener('online', handleOnlineRecovery);
 
     const resizeObserver = new ResizeObserver(() => {
       map.resize();
@@ -417,7 +549,11 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     setMapInstance(map);
 
     return () => {
+      clearWatchdog();
+      window.removeEventListener('online', handleOnlineRecovery);
       resizeObserver.disconnect();
+      map.off('error', handleMapError);
+      map.off('sourcedata', handleSourceData);
       map.off('style.load', handleStyleLoad);
       map.off('load', handleStyleLoad);
       map.off('styleimagemissing', handleMissingStyleImage);
@@ -437,13 +573,43 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     };
   }, []);
 
-  // Switch between OpenFreeMap Dark and OpenFreeMap Liberty vector styles
-  const appliedBasemapRef = useRef<BasemapStyle>(basemap);
+  // Switch between Dark and Light Street basemaps (always starts at Tier 0 primary vector provider)
   useEffect(() => {
     if (!mapInstance || appliedBasemapRef.current === basemap) return;
     appliedBasemapRef.current = basemap;
+    const chain = getBasemapStyleChain(basemap);
+    const primary = chain[0];
+    if (styleWatchdogTimerRef.current !== null) {
+      window.clearTimeout(styleWatchdogTimerRef.current);
+      styleWatchdogTimerRef.current = null;
+    }
+    providerIndexRef.current = 0;
+    styleLoadedRef.current = false;
+    loadedBasemapTilesRef.current = 0;
+    consecutiveTileErrorsRef.current = 0;
+    activeStyleUrlRef.current = primary.styleUrl;
     setStyleRevision(0);
-    mapInstance.setStyle(VECTOR_STYLES[basemap].url);
+    mapInstance.setStyle(primary.style);
+
+    if (primary.expectsRemoteTiles && chain.length > 1) {
+      styleWatchdogTimerRef.current = window.setTimeout(() => {
+        styleWatchdogTimerRef.current = null;
+        if (
+          providerIndexRef.current === 0 &&
+          loadedBasemapTilesRef.current === 0 &&
+          (!styleLoadedRef.current || consecutiveTileErrorsRef.current > 0)
+        ) {
+          const fallback = chain[1];
+          providerIndexRef.current = 1;
+          styleLoadedRef.current = false;
+          loadedBasemapTilesRef.current = 0;
+          consecutiveTileErrorsRef.current = 0;
+          activeStyleUrlRef.current = fallback.styleUrl;
+          setStyleRevision(0);
+          mapInstance.setStyle(fallback.style);
+        }
+      }, BASEMAP_WATCHDOG_MS);
+    }
   }, [mapInstance, basemap]);
 
   // Active vehicles on enabled lines (stable reference across animation frames)
@@ -582,11 +748,20 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
       data: routesGeoJson,
     });
 
-    // Place transit lines underneath symbol/label layers when possible so street names remain crisp
+    // Place transit lines ABOVE all road/building/water geometry layers, while remaining
+    // cleanly underneath top-level place/road text labels (avoiding mid-stack waterway labels
+    // that sit below road casings in CARTO Voyager!).
     const styleLayers = mapInstance.getStyle()?.layers || [];
-    const firstLabelLayer = styleLayers.find(
-      (l) => l.type === 'symbol' && l.id.toLowerCase().includes('label')
-    )?.id;
+    let lastNonSymbolIdx = -1;
+    for (let i = 0; i < styleLayers.length; i++) {
+      const layer = styleLayers[i];
+      if (!layer.id.startsWith('t2c-') && layer.type !== 'symbol') {
+        lastNonSymbolIdx = i;
+      }
+    }
+    const firstLabelLayer = styleLayers
+      .slice(lastNonSymbolIdx + 1)
+      .find((l) => l.type === 'symbol' && !l.id.startsWith('t2c-'))?.id;
 
     // Responsive zoom-scaled lane offset (top-level interpolate expression for MapLibre compliance)
     const lineOffsetExpr: maplibregl.ExpressionSpecification = [
@@ -847,76 +1022,78 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
         },
       });
 
-      // GPU-rendered stop name labels with automatic collision avoidance (toggled via bottom-left button)
-      mapInstance.addLayer({
-        id: STATIONS_LABELS_LAYER_ID,
-        type: 'symbol',
-        source: STATIONS_SOURCE_ID,
-        layout: {
-          visibility: showStationLabels ? 'visible' : 'none',
-          'text-field': ['get', 'shortLabel'],
-          'text-font': textFont,
-          'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10.5, 14, 11.5, 16, 12.5],
-          'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
-          'text-radial-offset': 0.85,
-          'text-max-width': 12,
-          'text-padding': 4,
-          'text-allow-overlap': false,
-          'text-ignore-placement': false,
-          'symbol-sort-key': [
-            'case',
-            ['==', ['get', 'isSelected'], 1],
-            0,
-            ['==', ['get', 'isMajorHub'], 1],
-            1,
-            2,
-          ],
-        },
-        paint: {
-          'text-color': isDark ? '#F1F5F9' : '#0F172A',
-          'text-halo-color': isDark ? 'rgba(9, 13, 22, 0.94)' : 'rgba(255, 255, 255, 0.95)',
-          'text-halo-width': 1.8,
-          'text-halo-blur': 0.4,
-          'text-opacity': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            11.2,
-            ['case', ['any', ['==', ['get', 'isSelected'], 1], ['==', ['get', 'isMajorHub'], 1]], 1, 0],
-            12.0,
-            1,
-          ],
-        },
-      });
+      // GPU-rendered stop name labels with automatic collision avoidance (only when active style provides glyphs)
+      if (styleSupportsGlyphLabels(mapInstance.getStyle())) {
+        mapInstance.addLayer({
+          id: STATIONS_LABELS_LAYER_ID,
+          type: 'symbol',
+          source: STATIONS_SOURCE_ID,
+          layout: {
+            visibility: showStationLabels ? 'visible' : 'none',
+            'text-field': ['get', 'shortLabel'],
+            'text-font': textFont,
+            'text-size': ['interpolate', ['linear'], ['zoom'], 11, 10.5, 14, 11.5, 16, 12.5],
+            'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
+            'text-radial-offset': 0.85,
+            'text-max-width': 12,
+            'text-padding': 4,
+            'text-allow-overlap': false,
+            'text-ignore-placement': false,
+            'symbol-sort-key': [
+              'case',
+              ['==', ['get', 'isSelected'], 1],
+              0,
+              ['==', ['get', 'isMajorHub'], 1],
+              1,
+              2,
+            ],
+          },
+          paint: {
+            'text-color': isDark ? '#F1F5F9' : '#0F172A',
+            'text-halo-color': isDark ? 'rgba(9, 13, 22, 0.94)' : 'rgba(255, 255, 255, 0.95)',
+            'text-halo-width': 1.8,
+            'text-halo-blur': 0.4,
+            'text-opacity': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              11.2,
+              ['case', ['any', ['==', ['get', 'isSelected'], 1], ['==', ['get', 'isMajorHub'], 1]], 1, 0],
+              12.0,
+              1,
+            ],
+          },
+        });
 
-      // Always-visible highlighted label for the currently selected or hovered station
-      mapInstance.addLayer({
-        id: STATIONS_ACTIVE_LABEL_LAYER_ID,
-        type: 'symbol',
-        source: STATIONS_SOURCE_ID,
-        filter: ['==', ['get', 'id'], ''],
-        layout: {
-          'text-field': ['get', 'shortLabel'],
-          'text-font': textFont,
-          'text-size': 12.5,
-          'text-anchor': 'bottom',
-          'text-offset': [0, -1.0],
-          'text-max-width': 16,
-          'text-allow-overlap': true,
-          'text-ignore-placement': true,
-        },
-        paint: {
-          'text-color': [
-            'case',
-            ['==', ['get', 'isSelected'], 1],
-            '#38BDF8',
-            isDark ? '#FFFFFF' : '#0F172A',
-          ],
-          'text-halo-color': isDark ? 'rgba(5, 8, 16, 0.96)' : 'rgba(255, 255, 255, 0.96)',
-          'text-halo-width': 2.2,
-          'text-halo-blur': 0.3,
-        },
-      });
+        // Always-visible highlighted label for the currently selected or hovered station
+        mapInstance.addLayer({
+          id: STATIONS_ACTIVE_LABEL_LAYER_ID,
+          type: 'symbol',
+          source: STATIONS_SOURCE_ID,
+          filter: ['==', ['get', 'id'], ''],
+          layout: {
+            'text-field': ['get', 'shortLabel'],
+            'text-font': textFont,
+            'text-size': 12.5,
+            'text-anchor': 'bottom',
+            'text-offset': [0, -1.0],
+            'text-max-width': 16,
+            'text-allow-overlap': true,
+            'text-ignore-placement': true,
+          },
+          paint: {
+            'text-color': [
+              'case',
+              ['==', ['get', 'isSelected'], 1],
+              '#38BDF8',
+              isDark ? '#FFFFFF' : '#0F172A',
+            ],
+            'text-halo-color': isDark ? 'rgba(5, 8, 16, 0.96)' : 'rgba(255, 255, 255, 0.96)',
+            'text-halo-width': 2.2,
+            'text-halo-blur': 0.3,
+          },
+        });
+      }
     }
 
     if (mapInstance.getLayer(STATIONS_LABELS_LAYER_ID)) {
@@ -1832,7 +2009,7 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
           data-testid="station-labels-toggle-btn"
           className={`inline-flex items-center gap-1.5 h-9 sm:h-9 px-2.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-medium border shadow-xl ring-1 ring-white/[0.04] backdrop-blur-md transition-colors whitespace-nowrap ${
             showStationLabels
-              ? 'bg-sky-500/22 hover:bg-sky-500/30 text-sky-100 border-sky-400/60'
+              ? 'bg-[#0C253D]/95 hover:bg-[#10304F] text-sky-100 border-sky-400/75'
               : 'bg-[#0F1522]/94 hover:bg-slate-800/95 text-slate-200 border-slate-700/75'
           }`}
         >
