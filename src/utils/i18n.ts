@@ -381,6 +381,44 @@ const en = {
   'pwa.iosStep2': 'Scroll down and tap “Add to Home Screen”.',
   'pwa.iosStep3': 'Tap “Add” to launch T2Cramptés full-screen.',
   'pwa.offlineCachedBanner': 'Offline Mode — Showing cached T2C network data',
+
+  // GPS / Around Me
+  'map.locateMeAria': 'Center map on my location',
+  'map.locateMeTitle': 'Around me (GPS)',
+  'map.locatingTitle': 'Locating…',
+  'sidebar.nearMeTitle': 'Near me',
+  'sidebar.locateBtn': 'Around me',
+  'sidebar.locatingBtn': 'Locating…',
+  'sidebar.walkMin': '{mins} min walk',
+  'sidebar.gpsDenied': 'Location permission denied.',
+  'sidebar.gpsUnavailable': 'Unable to determine your location.',
+  'sidebar.noNearbyStops': 'No T2C stops found within 2.5 km.',
+
+  // Station direction grouping
+  'inspector.viewByDirection': 'By direction',
+  'inspector.viewChrono': 'Chronological',
+  'inspector.nextDeparturesCount': '{count} upcoming',
+
+  // Departure reminders
+  'reminder.setAria': 'Alert 5 min before Line {line} to {headsign}',
+  'reminder.removeAria': 'Cancel alert for Line {line} to {headsign}',
+  'reminder.setTitle': 'Alert 5 min before arrival',
+  'reminder.armedTitle': 'Reminder active (5 min before) — click to cancel',
+  'reminder.bannerTitle': 'Line {line} approaching {station}',
+  'reminder.bannerBody': 'Toward {headsign} · arrives in {eta}',
+  'reminder.notifTitle': 'T2Cramptés — Line {line} at {station}',
+  'reminder.notifBody': 'Toward {headsign} arriving in ~{mins} min.',
+
+  // GTFS topology freshness
+  'status.gtfsTopology': 'GTFS topology',
+  'status.gtfsFresh': 'Up to date',
+  'status.gtfsStale': '{days} days old',
+  'status.gtfsStaleNotice':
+    'Static GTFS map data is {days} days old. Update the app or rebuild static data for the latest route changes.',
+
+  // Android update checker
+  'update.availableText': 'New Android version available ({version})',
+  'update.downloadCta': 'Update APK',
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -702,6 +740,44 @@ const fr: Record<TranslationKey, string> = {
   'pwa.iosStep2': 'Faites défiler et touchez « Sur l’écran d’accueil ».',
   'pwa.iosStep3': 'Touchez « Ajouter » pour lancer T2Cramptés en plein écran.',
   'pwa.offlineCachedBanner': 'Mode hors ligne — Données T2C en cache affichées',
+
+  // GPS / Autour de moi
+  'map.locateMeAria': 'Centrer la carte sur ma position',
+  'map.locateMeTitle': 'Autour de moi (GPS)',
+  'map.locatingTitle': 'Localisation…',
+  'sidebar.nearMeTitle': 'Près de moi',
+  'sidebar.locateBtn': 'Autour de moi',
+  'sidebar.locatingBtn': 'Localisation…',
+  'sidebar.walkMin': '{mins} min à pied',
+  'sidebar.gpsDenied': 'Autorisation GPS refusée.',
+  'sidebar.gpsUnavailable': 'Position GPS indisponible.',
+  'sidebar.noNearbyStops': 'Aucun arrêt T2C à moins de 2,5 km.',
+
+  // Groupement par direction
+  'inspector.viewByDirection': 'Par direction',
+  'inspector.viewChrono': 'Chronologique',
+  'inspector.nextDeparturesCount': '{count} passages',
+
+  // Rappel d'approche
+  'reminder.setAria': 'Alerte 5 min avant la ligne {line} vers {headsign}',
+  'reminder.removeAria': 'Annuler l’alerte pour la ligne {line} vers {headsign}',
+  'reminder.setTitle': 'Alerte 5 min avant le passage',
+  'reminder.armedTitle': 'Rappel actif (5 min avant) — cliquer pour annuler',
+  'reminder.bannerTitle': 'Ligne {line} à l’approche de {station}',
+  'reminder.bannerBody': 'Direction {headsign} · passage dans {eta}',
+  'reminder.notifTitle': 'T2Cramptés — Ligne {line} à {station}',
+  'reminder.notifBody': 'Direction {headsign} dans environ {mins} min.',
+
+  // Fraîcheur topologie GTFS
+  'status.gtfsTopology': 'Topologie GTFS',
+  'status.gtfsFresh': 'À jour',
+  'status.gtfsStale': 'Âgée de {days} j',
+  'status.gtfsStaleNotice':
+    'Les données statiques GTFS datent de {days} jours. Mettez à jour l’application pour intégrer les derniers tracés.',
+
+  // Mise à jour Android
+  'update.availableText': 'Nouvelle version Android disponible ({version})',
+  'update.downloadCta': 'Mettre à jour',
 };
 
 export const TRANSLATIONS: Record<AppLocale, Record<TranslationKey, string>> = {

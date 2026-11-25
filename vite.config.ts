@@ -180,10 +180,6 @@ export default defineConfig(() => {
               maplibreWorkerSrc,
               path.resolve(assetsDir, 'maplibre-gl-worker.js'),
             );
-            fs.copyFileSync(
-              maplibreWorkerSrc,
-              path.resolve(assetsDir, 'maplibre-gl-worker.mjs'),
-            );
           }
         },
       },
@@ -195,17 +191,11 @@ export default defineConfig(() => {
     },
     build: {
       target: 'es2020',
-      modulePreload: {
-        resolveDependencies(_filename, deps) {
-          return deps.filter((dep) => !dep.includes('vendor-charts'));
-        },
-      },
       rollupOptions: {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
             if (id.includes('maplibre-gl')) return 'vendor-maplibre';
-            if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
             if (id.includes('gtfs-realtime-bindings') || id.includes('protobufjs')) {
               return 'vendor-gtfs-rt';
             }

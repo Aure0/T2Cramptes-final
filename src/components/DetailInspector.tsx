@@ -4,23 +4,29 @@ import {
   AlertTriangle,
   ArrowRight,
   BarChart3,
+  Bell,
+  BellRing,
   Check,
   ChevronRight,
   Clock,
   Crosshair,
   Link2,
+  List,
   Navigation,
   RefreshCw,
+  Split,
   Star,
   X,
 } from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
 import type {
   LiveVehicle,
+  StationArrival,
   StationArrivalsResponse,
   TransitRoute,
   TransitStation,
 } from '../types/transit';
+import { groupStationArrivalsByDirection } from '../utils/stationGrouping';
 import {
   computeSegmentProgress,
   formatDelayStatus,
@@ -52,6 +58,8 @@ interface DetailInspectorProps {
   onOpenRouteAlerts?: (routeId: string | null) => void;
   isStationFavorite?: boolean;
   onToggleFavoriteStation?: (stationId: string) => void;
+  isReminderArmed?: (tripId: string, stopId: string) => boolean;
+  onToggleReminder?: (arrival: StationArrival, station: TransitStation) => void;
 }
 
 export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
@@ -74,9 +82,12 @@ export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
   onOpenRouteAlerts,
   isStationFavorite = false,
   onToggleFavoriteStation,
+  isReminderArmed,
+  onToggleReminder,
 }) => {
   const { locale, t } = useI18n();
   const [routeFilter, setRouteFilter] = useState<string>('all');
+  const [groupByDirection, setGroupByDirection] = useState<boolean>(true);
   const [vehicleTab, setVehicleTab] = useState<'trip' | 'punctuality'>('trip');
   const [copiedLink, setCopiedLink] = useState(false);
   const copyTimerRef = useRef<number | null>(null);
@@ -128,6 +139,11 @@ export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
       .filter((a) => a.arrivalTime >= nowEpochSec - 30)
       .filter((a) => effectiveRouteFilter === 'all' || a.routeId === effectiveRouteFilter);
   }, [stationArrivals, nowEpochSec, effectiveRouteFilter]);
+
+  const groupedDirections = useMemo(
+    () => groupStationArrivalsByDirection(filteredArrivals),
+    [filteredArrivals]
+  );
 
   if (!selectedStation && !selectedVehicle) {
     return null;
@@ -602,14 +618,46 @@ export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
         </div>
       )}
 
-      {/* Column Headers */}
-      <div className="px-4 py-2 border-b border-slate-800/70 grid grid-cols-[auto_1fr_auto] gap-3 text-[11px] font-medium text-slate-400">
-        <span>{t('inspector.colLine')}</span>
-        <span>{t('inspector.colDestStatus')}</span>
-        <span className="text-right">{t('inspector.colArrival')}</span>
+      {/* Direction Grouping Toggle & Column Header Bar */}
+      <div className="px-4 py-2 border-b border-slate-800/70 flex items-center justify-between gap-2 text-[11px] font-medium text-slate-400">
+        <div
+          role="group"
+          aria-label={t('inspector.viewByDirection')}
+          className="inline-flex items-center p-0.5 rounded-md bg-[#090D16] border border-slate-800/80"
+        >
+          <button
+            type="button"
+            onClick={() => setGroupByDirection(true)}
+            aria-pressed={groupByDirection}
+            data-testid="station-view-grouped-btn"
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors whitespace-nowrap ${
+              groupByDirection
+                ? 'bg-slate-800 text-white'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Split className="w-3 h-3" aria-hidden="true" />
+            {t('inspector.viewByDirection')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setGroupByDirection(false)}
+            aria-pressed={!groupByDirection}
+            data-testid="station-view-chrono-btn"
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors whitespace-nowrap ${
+              !groupByDirection
+                ? 'bg-slate-800 text-white'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <List className="w-3 h-3" aria-hidden="true" />
+            {t('inspector.viewChrono')}
+          </button>
+        </div>
+        <span className="text-right shrink-0">{t('inspector.colArrival')}</span>
       </div>
 
-      {/* Live Arrivals List */}
+      {/* Live Arrivals List (Grouped by Direction or Chronological) */}
       <div className="flex-1 overflow-y-auto transit-scroll divide-y divide-slate-800/60">
         {isLoadingStation && !stationArrivals ? (
           <div className="p-4 space-y-2.5">
@@ -638,6 +686,119 @@ export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
               {t('inspector.noDeparturesBody')}
             </p>
           </div>
+        ) : groupByDirection ? (
+          groupedDirections.map((group) => (
+            <div key={group.key} data-testid="station-direction-group" className="bg-[#0F1522]">
+              <div className="px-4 py-2 bg-[#0B101C]/85 border-b border-slate-800/60 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <RouteBadge
+                    shortName={group.routeShortName}
+                    color={group.routeColor}
+                    textColor={group.routeTextColor}
+                    size="xs"
+                  />
+                  <span className="text-xs font-semibold text-white truncate">
+                    → {group.displayHeadsign}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono-tabular text-slate-400 shrink-0">
+                  {t('inspector.nextDeparturesCount', { count: group.arrivals.length })}
+                </span>
+              </div>
+              <div className="divide-y divide-slate-800/50">
+                {group.arrivals.slice(0, 4).map((arrival, idx) => {
+                  const countdown = formatEtaCountdown(arrival.arrivalTime, nowEpochSec, locale);
+                  const clockTime = formatParisClock(arrival.arrivalTime);
+                  const delay = formatDelayStatus(arrival.delaySeconds, locale);
+                  const liveVeh = arrival.vehicleId ? vehiclesById[arrival.vehicleId] : undefined;
+                  const isDue = Math.round(arrival.arrivalTime - nowEpochSec) <= 45;
+                  const armed = isReminderArmed?.(arrival.tripId, arrival.stopId) ?? false;
+
+                  return (
+                    <div
+                      key={`${arrival.tripId}-${arrival.stopId}-${idx}`}
+                      className="px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-800/35 transition-colors"
+                    >
+                      <div className="min-w-0 flex items-center gap-2 text-[11px]">
+                        <span
+                          className={`font-mono-tabular ${
+                            delay.tone === 'delayed'
+                              ? 'text-amber-400'
+                              : delay.tone === 'early'
+                                ? 'text-sky-400'
+                                : 'text-emerald-400'
+                          }`}
+                        >
+                          {delay.label}
+                        </span>
+                        {liveVeh && (
+                          <>
+                            <span className="text-slate-600" aria-hidden="true">
+                              ·
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onSelectVehicle(liveVeh)}
+                              className="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 font-medium transition-colors"
+                            >
+                              <Navigation className="w-2.5 h-2.5" aria-hidden="true" />
+                              {t('inspector.trackLive')}
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2.5 shrink-0">
+                        {onToggleReminder && !isDue && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleReminder(arrival, station)}
+                            data-testid="arrival-reminder-btn"
+                            aria-pressed={armed}
+                            aria-label={
+                              armed
+                                ? t('reminder.removeAria', {
+                                    line: arrival.routeShortName,
+                                    headsign: group.displayHeadsign,
+                                  })
+                                : t('reminder.setAria', {
+                                    line: arrival.routeShortName,
+                                    headsign: group.displayHeadsign,
+                                  })
+                            }
+                            title={armed ? t('reminder.armedTitle') : t('reminder.setTitle')}
+                            className={`p-1.5 rounded-md transition-colors ${
+                              armed
+                                ? 'text-amber-300 bg-amber-500/15 hover:bg-amber-500/25'
+                                : 'text-slate-500 hover:text-slate-200 hover:bg-slate-800'
+                            }`}
+                          >
+                            {armed ? (
+                              <BellRing className="w-3.5 h-3.5" aria-hidden="true" />
+                            ) : (
+                              <Bell className="w-3.5 h-3.5" aria-hidden="true" />
+                            )}
+                          </button>
+                        )}
+                        <div className="text-right min-w-[54px]">
+                          <div
+                            className={`font-mono-tabular text-sm font-semibold ${
+                              isDue ? 'text-emerald-400' : 'text-white'
+                            }`}
+                          >
+                            {countdown}
+                          </div>
+                          <div className="font-mono-tabular text-[11px] text-slate-400">
+                            {clockTime}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))
         ) : (
           filteredArrivals.map((arrival, idx) => {
             const countdown = formatEtaCountdown(arrival.arrivalTime, nowEpochSec, locale);
@@ -645,6 +806,8 @@ export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
             const delay = formatDelayStatus(arrival.delaySeconds, locale);
             const liveVeh = arrival.vehicleId ? vehiclesById[arrival.vehicleId] : undefined;
             const isDue = Math.round(arrival.arrivalTime - nowEpochSec) <= 45;
+            const armed = isReminderArmed?.(arrival.tripId, arrival.stopId) ?? false;
+            const shortHeadsign = formatShortStationLabel(arrival.headsign);
 
             return (
               <div
@@ -660,7 +823,7 @@ export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
 
                 <div className="min-w-0">
                   <div className="text-xs font-medium text-slate-100 truncate">
-                    {formatShortStationLabel(arrival.headsign)}
+                    {shortHeadsign}
                   </div>
                   <div className="flex items-center gap-2 mt-1 text-[11px]">
                     <span
@@ -692,16 +855,49 @@ export const DetailInspector: React.FC<DetailInspectorProps> = React.memo(({
                   </div>
                 </div>
 
-                <div className="text-right shrink-0">
-                  <div
-                    className={`font-mono-tabular text-sm font-semibold ${
-                      isDue ? 'text-emerald-400' : 'text-white'
-                    }`}
-                  >
-                    {countdown}
-                  </div>
-                  <div className="font-mono-tabular text-[11px] text-slate-400">
-                    {clockTime}
+                <div className="flex items-center gap-2 shrink-0">
+                  {onToggleReminder && !isDue && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleReminder(arrival, station)}
+                      data-testid="arrival-reminder-btn"
+                      aria-pressed={armed}
+                      aria-label={
+                        armed
+                          ? t('reminder.removeAria', {
+                              line: arrival.routeShortName,
+                              headsign: shortHeadsign,
+                            })
+                          : t('reminder.setAria', {
+                              line: arrival.routeShortName,
+                              headsign: shortHeadsign,
+                            })
+                      }
+                      title={armed ? t('reminder.armedTitle') : t('reminder.setTitle')}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        armed
+                          ? 'text-amber-300 bg-amber-500/15 hover:bg-amber-500/25'
+                          : 'text-slate-500 hover:text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      {armed ? (
+                        <BellRing className="w-3.5 h-3.5" aria-hidden="true" />
+                      ) : (
+                        <Bell className="w-3.5 h-3.5" aria-hidden="true" />
+                      )}
+                    </button>
+                  )}
+                  <div className="text-right min-w-[54px]">
+                    <div
+                      className={`font-mono-tabular text-sm font-semibold ${
+                        isDue ? 'text-emerald-400' : 'text-white'
+                      }`}
+                    >
+                      {countdown}
+                    </div>
+                    <div className="font-mono-tabular text-[11px] text-slate-400">
+                      {clockTime}
+                    </div>
                   </div>
                 </div>
               </div>

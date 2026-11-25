@@ -9,6 +9,8 @@ import {
   EyeOff,
   Flame,
   Layers,
+  Loader2,
+  LocateFixed,
   Minus,
   Pause,
   Play,
@@ -52,6 +54,13 @@ import {
   samplePreparedPathInto,
   type PreparedPolylinePath,
 } from '../utils/transitMath';
+import {
+  getVehicleArrowImageId,
+  getVehicleBadgeImageId,
+  renderVehicleArrowSprite,
+  renderVehicleBadgeSprite,
+} from '../utils/vehicleSpriteRenderer';
+import type { UserLocationPoint } from '../hooks/useGeolocation';
 import { useI18n } from '../contexts/I18nContext';
 import type { BasemapStyle } from '../utils/userPreferences';
 import { RouteBadge } from './RouteBadge';
@@ -87,8 +96,22 @@ const STATIONS_ACTIVE_LABEL_LAYER_ID = 't2c-stations-active-label';
 const DENSITY_SOURCE_ID = 't2c-density-source';
 const DENSITY_HEATMAP_LAYER_ID = 't2c-density-heatmap';
 
+const VEHICLES_SOURCE_ID = 't2c-vehicles-source';
+const VEHICLES_ARROW_LAYER_ID = 't2c-vehicles-arrow';
+const VEHICLES_BADGE_LAYER_ID = 't2c-vehicles-badge';
+
+const USER_LOC_SOURCE_ID = 't2c-user-location-source';
+const USER_LOC_HALO_LAYER_ID = 't2c-user-location-halo';
+const USER_LOC_DOT_LAYER_ID = 't2c-user-location-dot';
+
 interface HoveredRouteTooltipState {
   routeId: string;
+  x: number;
+  y: number;
+}
+
+interface HoveredVehicleTooltipState {
+  vehicleId: string;
   x: number;
   y: number;
 }
@@ -149,6 +172,10 @@ interface TransitMapProps {
   showDensity: boolean;
   onToggleDensity: () => void;
   feedHealth: FeedHealthAssessment;
+  userLocation?: UserLocationPoint | null;
+  isLocating?: boolean;
+  locateNonce?: number;
+  onRequestLocation?: () => void;
 }
 
 interface MapViewportState {
@@ -157,81 +184,50 @@ interface MapViewportState {
   isAnimating: boolean;
 }
 
-function createVehicleElement(
-  shortName: string,
-  routeColor: string,
-  routeTextColor: string,
-  bearing: number,
-  isSelected: boolean,
-  title: string
-): HTMLDivElement {
-  const wrap = document.createElement('div');
-  wrap.className = 't2c-vehicle-wrap';
-  wrap.title = title;
-  wrap.style.cssText =
-    'display:flex;align-items:center;justify-content:center;width:36px;height:36px;cursor:pointer;';
-
-  const inner = document.createElement('div');
-  inner.className = 't2c-vehicle-inner';
-  inner.style.cssText = `position:relative;display:flex;align-items:center;justify-content:center;width:24px;height:24px;transform:${isSelected ? 'scale(1.22)' : 'scale(1)'};transition:transform 180ms ease;`;
-
-  const heading = document.createElement('div');
-  heading.className = 't2c-vehicle-heading';
-  heading.style.cssText = `position:absolute;inset:-8px;pointer-events:none;transform:rotate(${Math.round(bearing)}deg);`;
-
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('viewBox', '0 0 36 36');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.style.cssText = 'width:100%;height:100%;overflow:visible;';
-
-  const poly = document.createElementNS(svgNS, 'polygon');
-  poly.setAttribute('points', '18,0 22.5,7 13.5,7');
-  poly.setAttribute('fill', isSelected ? '#38BDF8' : '#F8FAFC');
-  poly.setAttribute('stroke', '#050810');
-  poly.setAttribute('stroke-width', '1');
-  svg.appendChild(poly);
-  heading.appendChild(svg);
-
-  const body = document.createElement('div');
-  body.className = 't2c-vehicle-body font-display';
-  body.textContent = shortName;
-  const ringStyle = isSelected
-    ? '0 0 0 2px #0B0F17, 0 0 0 4px #38BDF8, 0 6px 14px rgba(0,0,0,0.6)'
-    : '0 0 0 2px #0B0F17, 0 4px 10px rgba(0,0,0,0.55)';
-  body.style.cssText = `position:relative;display:flex;align-items:center;justify-content:center;height:24px;min-width:24px;padding:0 4px;border-radius:9999px;font-size:11px;font-weight:700;line-height:1;background:${routeColor};color:${routeTextColor};box-shadow:${ringStyle};`;
-
-  inner.appendChild(heading);
-  inner.appendChild(body);
-  wrap.appendChild(inner);
-  return wrap;
+interface GpuVehicleRuntime {
+  lastHeadingDeg: number;
+  lastLat: number;
+  lastLng: number;
+  displayProgress: number;
+  segmentKey: string;
+  vehicle: LiveVehicle;
+  preparedPath: PreparedPolylinePath;
+  feature: Feature<Point, { id: string; badgeImg: string; arrowImg: string; bearing: number; sortKey: number }>;
 }
 
-function updateVehicleElement(
-  wrap: HTMLDivElement,
-  shortName: string,
-  routeColor: string,
-  routeTextColor: string,
-  bearing: number,
-  isSelected: boolean,
-  title: string
+function ensureVehicleSpritesOnMap(
+  map: maplibregl.Map,
+  vehicles: readonly LiveVehicle[],
+  selectedVehicleId: string | null
 ): void {
-  if (wrap.title !== title) wrap.title = title;
-  const inner = wrap.querySelector('.t2c-vehicle-inner') as HTMLElement | null;
-  const heading = wrap.querySelector('.t2c-vehicle-heading') as HTMLElement | null;
-  const poly = wrap.querySelector('polygon');
-  const body = wrap.querySelector('.t2c-vehicle-body') as HTMLElement | null;
+  const arrowNormalId = getVehicleArrowImageId(false);
+  if (!map.hasImage(arrowNormalId)) {
+    const bmp = renderVehicleArrowSprite(false);
+    if (bmp) map.addImage(arrowNormalId, bmp, { pixelRatio: 2 });
+  }
+  const arrowSelectedId = getVehicleArrowImageId(true);
+  if (!map.hasImage(arrowSelectedId)) {
+    const bmp = renderVehicleArrowSprite(true);
+    if (bmp) map.addImage(arrowSelectedId, bmp, { pixelRatio: 2 });
+  }
 
-  if (heading) heading.style.transform = `rotate(${Math.round(bearing)}deg)`;
-  if (inner) inner.style.transform = isSelected ? 'scale(1.22)' : 'scale(1)';
-  if (poly) poly.setAttribute('fill', isSelected ? '#38BDF8' : '#F8FAFC');
-  if (body) {
-    if (body.textContent !== shortName) body.textContent = shortName;
-    body.style.background = routeColor;
-    body.style.color = routeTextColor;
-    body.style.boxShadow = isSelected
-      ? '0 0 0 2px #0B0F17, 0 0 0 4px #38BDF8, 0 6px 14px rgba(0,0,0,0.6)'
-      : '0 0 0 2px #0B0F17, 0 4px 10px rgba(0,0,0,0.55)';
+  for (const v of vehicles) {
+    const isSelected = selectedVehicleId === v.id;
+    const badgeId = getVehicleBadgeImageId(
+      v.routeShortName,
+      v.routeColor,
+      v.routeTextColor,
+      isSelected
+    );
+    if (!map.hasImage(badgeId)) {
+      const bmp = renderVehicleBadgeSprite(
+        v.routeShortName,
+        v.routeColor,
+        v.routeTextColor,
+        isSelected
+      );
+      if (bmp) map.addImage(badgeId, bmp, { pixelRatio: 2 });
+    }
   }
 }
 
@@ -259,14 +255,19 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
   showDensity,
   onToggleDensity,
   feedHealth,
+  userLocation = null,
+  isLocating = false,
+  locateNonce = 0,
+  onRequestLocation,
 }) => {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const [densityMetric, setDensityMetric] = useState<DensityMetricMode>('congestion');
   const [densityScope, setDensityScope] = useState<DensityScope>('network');
   const [densityTick, setDensityTick] = useState(0);
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [styleRevision, setStyleRevision] = useState(0);
   const [hoveredRoute, setHoveredRoute] = useState<HoveredRouteTooltipState | null>(null);
+  const [hoveredVehicle, setHoveredVehicle] = useState<HoveredVehicleTooltipState | null>(null);
   const [hoveredStationId, setHoveredStationId] = useState<string | null>(null);
   const [viewport, setViewport] = useState<MapViewportState>({
     zoom: DEFAULT_ZOOM,
@@ -284,6 +285,7 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
   const pausedClockSecRef = useRef<number | null>(null);
   const isUserInteractingRef = useRef<boolean>(false);
   const hoveringStationRef = useRef<boolean>(false);
+  const hoveringVehicleRef = useRef<boolean>(false);
   const styleLoadedRef = useRef<boolean>(false);
   const providerIndexRef = useRef<number>(0);
   const loadedBasemapTilesRef = useRef<number>(0);
@@ -309,24 +311,10 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
   const stationsByIdRef = useRef(stationsById);
   stationsByIdRef.current = stationsById;
 
-  const vehicleMarkersRef = useRef<
-    Record<
-      string,
-      {
-        marker: maplibregl.Marker;
-        el: HTMLDivElement;
-        headingEl: HTMLElement | null;
-        lastHeadingDeg: number;
-        lastLat: number;
-        lastLng: number;
-        displayProgress: number;
-        segmentKey: string;
-        signature: string;
-        vehicle: LiveVehicle;
-        preparedPath: PreparedPolylinePath;
-      }
-    >
-  >({});
+  const vehicleStateRef = useRef<Record<string, GpuVehicleRuntime>>({});
+  const vehiclesFeatureListRef = useRef<
+    Array<Feature<Point, { id: string; badgeImg: string; arrowImg: string; bearing: number; sortKey: number }>>
+  >([]);
 
   const onSelectStationRef = useRef(onSelectStation);
   const onSelectVehicleRef = useRef(onSelectVehicle);
@@ -564,10 +552,8 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
       map.off('dragend', handleUserInteractEnd);
       map.off('zoomstart', handleUserInteractStart);
       map.off('zoomend', handleUserInteractEnd);
-      for (const id of Object.keys(vehicleMarkersRef.current)) {
-        vehicleMarkersRef.current[id].marker.remove();
-      }
-      vehicleMarkersRef.current = {};
+      vehicleStateRef.current = {};
+      vehiclesFeatureListRef.current = [];
       map.remove();
       setMapInstance(null);
     };
@@ -1200,8 +1186,8 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     };
 
     const handleMouseMove = (e: maplibregl.MapLayerMouseEvent) => {
-      // Skip pointer hover tooltips on coarse touch screens or while hovering a station dot
-      if (hoveringStationRef.current) return;
+      // Skip pointer hover tooltips on coarse touch screens or while hovering a station/vehicle
+      if (hoveringStationRef.current || hoveringVehicleRef.current) return;
       if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return;
       const feature = e.features?.[0];
       const routeId = feature?.properties?.routeId as string | undefined;
@@ -1220,7 +1206,7 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     };
 
     const handleMouseLeave = () => {
-      if (!hoveringStationRef.current) {
+      if (!hoveringStationRef.current && !hoveringVehicleRef.current) {
         mapInstance.getCanvas().style.cursor = '';
       }
       pendingHover = null;
@@ -1373,13 +1359,113 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     }
   }, [mapInstance, styleRevision, densityGeoJson, showDensity, basemap]);
 
-  // Synchronize vehicle marker lifecycle & precompute zero-allocation polyline tables
+  // Register native GPU WebGL Vehicle layers (heading arrows + crisp HiDPI badges) & click/hover handlers
+  useEffect(() => {
+    if (!mapInstance || styleRevision === 0 || !mapInstance.getStyle()) return;
+
+    ensureVehicleSpritesOnMap(mapInstance, visibleVehicles, selectedVehicle?.id ?? null);
+
+    if (!mapInstance.getSource(VEHICLES_SOURCE_ID)) {
+      mapInstance.addSource(VEHICLES_SOURCE_ID, {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: vehiclesFeatureListRef.current,
+        },
+      });
+
+      // Directional heading arrow layer rotated smoothly on the GPU
+      mapInstance.addLayer({
+        id: VEHICLES_ARROW_LAYER_ID,
+        type: 'symbol',
+        source: VEHICLES_SOURCE_ID,
+        layout: {
+          'icon-image': ['get', 'arrowImg'],
+          'icon-rotate': ['get', 'bearing'],
+          'icon-rotation-alignment': 'map',
+          'icon-pitch-alignment': 'viewport',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'symbol-sort-key': ['get', 'sortKey'],
+        },
+      });
+
+      // Upright vehicle line badge layer (never rotates, always razor-sharp at 2x Retina)
+      mapInstance.addLayer({
+        id: VEHICLES_BADGE_LAYER_ID,
+        type: 'symbol',
+        source: VEHICLES_SOURCE_ID,
+        layout: {
+          'icon-image': ['get', 'badgeImg'],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'symbol-sort-key': ['get', 'sortKey'],
+        },
+      });
+    }
+
+    const handleVehicleClick = (e: maplibregl.MapLayerMouseEvent) => {
+      const feature = e.features?.[0];
+      const vehId = feature?.properties?.id as string | undefined;
+      if (!vehId) return;
+      const latest = vehicleStateRef.current[vehId]?.vehicle;
+      if (latest) {
+        e.originalEvent.stopPropagation();
+        onSelectVehicleRef.current(latest);
+      }
+    };
+
+    const handleVehicleMouseMove = (e: maplibregl.MapLayerMouseEvent) => {
+      const feature = e.features?.[0];
+      const vehId = feature?.properties?.id as string | undefined;
+      if (!vehId) return;
+      hoveringVehicleRef.current = true;
+      mapInstance.getCanvas().style.cursor = 'pointer';
+      setHoveredRoute(null);
+      setHoveredStationId(null);
+      if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return;
+      setHoveredVehicle({
+        vehicleId: vehId,
+        x: e.point.x,
+        y: e.point.y,
+      });
+    };
+
+    const handleVehicleMouseLeave = () => {
+      hoveringVehicleRef.current = false;
+      if (!hoveringStationRef.current) {
+        mapInstance.getCanvas().style.cursor = '';
+      }
+      setHoveredVehicle(null);
+    };
+
+    mapInstance.on('click', VEHICLES_BADGE_LAYER_ID, handleVehicleClick);
+    mapInstance.on('mousemove', VEHICLES_BADGE_LAYER_ID, handleVehicleMouseMove);
+    mapInstance.on('mouseleave', VEHICLES_BADGE_LAYER_ID, handleVehicleMouseLeave);
+
+    return () => {
+      mapInstance.off('click', VEHICLES_BADGE_LAYER_ID, handleVehicleClick);
+      mapInstance.off('mousemove', VEHICLES_BADGE_LAYER_ID, handleVehicleMouseMove);
+      mapInstance.off('mouseleave', VEHICLES_BADGE_LAYER_ID, handleVehicleMouseLeave);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, styleRevision]);
+
+  // Synchronize GPU vehicle runtime state, sprites, and GeoJSON features (zero DOM markers!)
   useEffect(() => {
     if (!mapInstance) return;
-    const store = vehicleMarkersRef.current;
+    const store = vehicleStateRef.current;
     const activeIds = new Set<string>();
     const nowSec = getAnimationClockSec();
     const sampleOut = { lat: 0, lng: 0, bearing: 0 };
+
+    if (styleRevision > 0 && mapInstance.getStyle()) {
+      ensureVehicleSpritesOnMap(mapInstance, visibleVehicles, selectedVehicle?.id ?? null);
+    }
+
+    const nextFeatures: Array<
+      Feature<Point, { id: string; badgeImg: string; arrowImg: string; bearing: number; sortKey: number }>
+    > = [];
 
     for (const vehicle of visibleVehicles) {
       activeIds.add(vehicle.id);
@@ -1393,16 +1479,14 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
       samplePreparedPathInto(preparedPath, progress, sampleOut);
       const headingDeg = Math.round(sampleOut.bearing);
       const isSelected = selectedVehicle?.id === vehicle.id;
-      const zIndex = isSelected ? '60' : vehicle.routeType === 0 ? '45' : '40';
-      const shortHeadsign = formatShortStationLabel(vehicle.headsign);
-      const shortNextStop = formatShortStationLabel(vehicle.nextStopName);
-      const signature = `${locale}|${vehicle.routeShortName}|${vehicle.routeColor}|${vehicle.routeTextColor}|${isSelected}|${shortNextStop}`;
-      const title = t('map.vehicleTooltip', {
-        line: vehicle.routeShortName,
-        headsign: shortHeadsign,
-        stop: shortNextStop,
-      });
-
+      const sortKey = isSelected ? 100 : vehicle.routeType === 0 ? 50 : 10;
+      const badgeImg = getVehicleBadgeImageId(
+        vehicle.routeShortName,
+        vehicle.routeColor,
+        vehicle.routeTextColor,
+        isSelected
+      );
+      const arrowImg = getVehicleArrowImageId(isSelected);
       const segmentKey = `${vehicle.prevStopId}|${vehicle.nextStopId}`;
 
       if (existing) {
@@ -1413,101 +1497,104 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
         existing.segmentKey = segmentKey;
 
         if (segmentChanged) {
-          // Seamless handoff to the next consecutive segment keeps the vehicle locked ON the line
           const isConsecutiveNext = prevVehicle.nextStopId === vehicle.prevStopId;
           existing.displayProgress = isConsecutiveNext ? Math.min(progress, 0.04) : progress;
           samplePreparedPathInto(preparedPath, existing.displayProgress, sampleOut);
-          existing.marker.setLngLat([sampleOut.lng, sampleOut.lat]);
           existing.lastLat = sampleOut.lat;
           existing.lastLng = sampleOut.lng;
-          const nextHeading = Math.round(sampleOut.bearing);
-          if (existing.headingEl && existing.lastHeadingDeg !== nextHeading) {
-            existing.headingEl.style.transform = `rotate(${nextHeading}deg)`;
-            existing.lastHeadingDeg = nextHeading;
-          }
+          existing.lastHeadingDeg = Math.round(sampleOut.bearing);
         } else if (
           isMotionPausedRef.current &&
           (Math.abs(existing.lastLat - sampleOut.lat) > 1e-7 ||
             Math.abs(existing.lastLng - sampleOut.lng) > 1e-7)
         ) {
           existing.displayProgress = progress;
-          existing.marker.setLngLat([sampleOut.lng, sampleOut.lat]);
           existing.lastLat = sampleOut.lat;
           existing.lastLng = sampleOut.lng;
+          existing.lastHeadingDeg = headingDeg;
         }
-        if (existing.signature !== signature) {
-          existing.marker.getElement().style.zIndex = zIndex;
-          updateVehicleElement(
-            existing.el,
-            vehicle.routeShortName,
-            vehicle.routeColor,
-            vehicle.routeTextColor,
-            existing.lastHeadingDeg,
-            isSelected,
-            title
-          );
-          existing.signature = signature;
-        }
-      } else {
-        const el = createVehicleElement(
-          vehicle.routeShortName,
-          vehicle.routeColor,
-          vehicle.routeTextColor,
-          headingDeg,
-          isSelected,
-          title
-        );
-        const vehId = vehicle.id;
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const latest = vehicleMarkersRef.current[vehId]?.vehicle;
-          if (latest) onSelectVehicleRef.current(latest);
-        });
 
-        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-          .setLngLat([sampleOut.lng, sampleOut.lat])
-          .addTo(mapInstance);
-        marker.getElement().style.zIndex = zIndex;
+        existing.feature.geometry.coordinates[0] = existing.lastLng;
+        existing.feature.geometry.coordinates[1] = existing.lastLat;
+        existing.feature.properties.badgeImg = badgeImg;
+        existing.feature.properties.arrowImg = arrowImg;
+        existing.feature.properties.bearing = existing.lastHeadingDeg;
+        existing.feature.properties.sortKey = sortKey;
+        nextFeatures.push(existing.feature);
+      } else {
+        const feature: Feature<
+          Point,
+          { id: string; badgeImg: string; arrowImg: string; bearing: number; sortKey: number }
+        > = {
+          type: 'Feature',
+          properties: {
+            id: vehicle.id,
+            badgeImg,
+            arrowImg,
+            bearing: headingDeg,
+            sortKey,
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: [sampleOut.lng, sampleOut.lat],
+          },
+        };
 
         store[vehicle.id] = {
-          marker,
-          el,
-          headingEl: el.querySelector('.t2c-vehicle-heading') as HTMLElement | null,
           lastHeadingDeg: headingDeg,
           lastLat: sampleOut.lat,
           lastLng: sampleOut.lng,
           displayProgress: progress,
           segmentKey,
-          signature,
           vehicle,
           preparedPath,
+          feature,
         };
+        nextFeatures.push(feature);
       }
     }
 
     for (const id of Object.keys(store)) {
       if (!activeIds.has(id)) {
-        store[id].marker.remove();
         delete store[id];
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, visibleVehicles, selectedVehicle, locale, t]);
 
-  // Smooth zero-allocation 30fps polyline-locked vehicle motion & per-axis dead-zone follow-camera loop
+    vehiclesFeatureListRef.current = nextFeatures;
+
+    if (styleRevision > 0 && mapInstance.getStyle()) {
+      const src = mapInstance.getSource(VEHICLES_SOURCE_ID) as
+        | maplibregl.GeoJSONSource
+        | undefined;
+      if (src) {
+        src.setData({
+          type: 'FeatureCollection',
+          features: nextFeatures,
+        });
+      }
+      if (mapInstance.getLayer(VEHICLES_ARROW_LAYER_ID)) {
+        mapInstance.moveLayer(VEHICLES_ARROW_LAYER_ID);
+      }
+      if (mapInstance.getLayer(VEHICLES_BADGE_LAYER_ID)) {
+        mapInstance.moveLayer(VEHICLES_BADGE_LAYER_ID);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, styleRevision, visibleVehicles, selectedVehicle]);
+
+  // Smooth zero-allocation 30fps GPU polyline-locked vehicle motion & follow-camera loop
   useEffect(() => {
-    if (!mapInstance || isMotionPaused || visibleVehicles.length === 0) return;
+    if (!mapInstance || styleRevision === 0 || isMotionPaused || visibleVehicles.length === 0) return;
 
     let rafId = 0;
     let lastFrameMs = 0;
     let lastFollowMs = 0;
-    const FRAME_INTERVAL_MS = 33; // ~30fps smooth glide with minimal CPU overhead
+    const FRAME_INTERVAL_MS = 33; // ~30fps smooth glide on GPU symbol layers
     const FOLLOW_INTERVAL_MS = 500;
-    const MAX_SPEED_MPS = 28; // realistic speed cap along the polyline so polls never teleport
-    const SMOOTH_K = 6; // exponential catch-up rate (1/s) along the track
+    const MAX_SPEED_MPS = 28;
+    const SMOOTH_K = 6;
     const MAX_TURN_DEG_S = 240;
     const sampleOut = { lat: 0, lng: 0, bearing: 0 };
-    const coordPair: [number, number] = [0, 0];
 
     const step = (ts: number) => {
       rafId = window.requestAnimationFrame(step);
@@ -1516,10 +1603,11 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
       lastFrameMs = ts;
 
       const nowSec = Date.now() / 1000 + serverClockOffsetRef.current;
-      const store = vehicleMarkersRef.current;
+      const store = vehicleStateRef.current;
       const followedId = followVehicleRef.current ? selectedVehicleIdRef.current : null;
       const blend = 1 - Math.exp(-SMOOTH_K * dtSec);
       const maxTurnDeg = MAX_TURN_DEG_S * dtSec;
+      let anyMoved = false;
 
       for (const id in store) {
         const entry = store[id];
@@ -1533,25 +1621,23 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
           const stepProg = Math.min(maxStepProg, Math.max(deltaProg * blend, 0));
           entry.displayProgress = Math.min(targetProgress, entry.displayProgress + stepProg);
         } else if (deltaProg < -1e-5) {
-          // Real transit vehicles do not drive backwards on small delay updates: hold gently unless far off
           const backMeters = -deltaProg * totalLenM;
           if (backMeters > 120) {
             entry.displayProgress = targetProgress;
           }
         }
 
-        // Always sample strictly ON the prepared route polyline -> 0m corner-cutting!
         samplePreparedPathInto(entry.preparedPath, entry.displayProgress, sampleOut);
 
         if (
           Math.abs(entry.lastLat - sampleOut.lat) > 1e-7 ||
           Math.abs(entry.lastLng - sampleOut.lng) > 1e-7
         ) {
-          coordPair[0] = sampleOut.lng;
-          coordPair[1] = sampleOut.lat;
-          entry.marker.setLngLat(coordPair);
           entry.lastLat = sampleOut.lat;
           entry.lastLng = sampleOut.lng;
+          entry.feature.geometry.coordinates[0] = sampleOut.lng;
+          entry.feature.geometry.coordinates[1] = sampleOut.lat;
+          anyMoved = true;
         }
 
         let dBear = (sampleOut.bearing - entry.lastHeadingDeg) % 360;
@@ -1561,9 +1647,10 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
         if (turn > maxTurnDeg) turn = maxTurnDeg;
         else if (turn < -maxTurnDeg) turn = -maxTurnDeg;
         const headingDeg = Math.round((entry.lastHeadingDeg + turn + 360) % 360);
-        if (entry.headingEl && entry.lastHeadingDeg !== headingDeg) {
-          entry.headingEl.style.transform = `rotate(${headingDeg}deg)`;
+        if (entry.lastHeadingDeg !== headingDeg) {
           entry.lastHeadingDeg = headingDeg;
+          entry.feature.properties.bearing = headingDeg;
+          anyMoved = true;
         }
 
         if (
@@ -1597,11 +1684,107 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
           }
         }
       }
+
+      if (anyMoved) {
+        const src = mapInstance.getSource(VEHICLES_SOURCE_ID) as
+          | maplibregl.GeoJSONSource
+          | undefined;
+        if (src) {
+          src.setData({
+            type: 'FeatureCollection',
+            features: vehiclesFeatureListRef.current,
+          });
+        }
+      }
     };
 
     rafId = window.requestAnimationFrame(step);
     return () => window.cancelAnimationFrame(rafId);
-  }, [mapInstance, isMotionPaused, visibleVehicles.length]);
+  }, [mapInstance, styleRevision, isMotionPaused, visibleVehicles.length]);
+
+  // Render user GPS blue dot + accuracy halo on GPU WebGL layers
+  useEffect(() => {
+    if (!mapInstance || styleRevision === 0 || !mapInstance.getStyle()) return;
+
+    const geojson: FeatureCollection<Point> = userLocation
+      ? {
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'Point',
+                coordinates: [userLocation.lng, userLocation.lat],
+              },
+            },
+          ],
+        }
+      : { type: 'FeatureCollection', features: [] };
+
+    const existing = mapInstance.getSource(USER_LOC_SOURCE_ID) as
+      | maplibregl.GeoJSONSource
+      | undefined;
+
+    if (existing) {
+      existing.setData(geojson);
+      return;
+    }
+
+    mapInstance.addSource(USER_LOC_SOURCE_ID, {
+      type: 'geojson',
+      data: geojson,
+    });
+
+    const beforeVehicles = mapInstance.getLayer(VEHICLES_ARROW_LAYER_ID)
+      ? VEHICLES_ARROW_LAYER_ID
+      : undefined;
+
+    mapInstance.addLayer(
+      {
+        id: USER_LOC_HALO_LAYER_ID,
+        type: 'circle',
+        source: USER_LOC_SOURCE_ID,
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 14, 15, 22],
+          'circle-color': 'rgba(56, 189, 248, 0.24)',
+          'circle-stroke-width': 1,
+          'circle-stroke-color': 'rgba(56, 189, 248, 0.55)',
+        },
+      },
+      beforeVehicles
+    );
+
+    mapInstance.addLayer(
+      {
+        id: USER_LOC_DOT_LAYER_ID,
+        type: 'circle',
+        source: USER_LOC_SOURCE_ID,
+        paint: {
+          'circle-radius': 6.5,
+          'circle-color': '#0EA5E9',
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': '#FFFFFF',
+        },
+      },
+      beforeVehicles
+    );
+  }, [mapInstance, styleRevision, userLocation]);
+
+  // Center map smoothly whenever user explicitly taps Locate Me / Autour de moi
+  const lastLocateNonceRef = useRef(0);
+  useEffect(() => {
+    if (!mapInstance || !userLocation || locateNonce === 0 || locateNonce === lastLocateNonceRef.current) {
+      return;
+    }
+    lastLocateNonceRef.current = locateNonce;
+    mapInstance.easeTo({
+      center: [userLocation.lng, userLocation.lat],
+      zoom: Math.max(mapInstance.getZoom(), 14.5),
+      duration: 650,
+      easing: easeOutCubic,
+    });
+  }, [mapInstance, userLocation, locateNonce]);
 
   // Smooth camera transition animation when selecting a new station
   useEffect(() => {
@@ -1684,7 +1867,7 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
     if (!mapInstance || !followVehicle || !selectedVehicle) return;
     const rafId = window.requestAnimationFrame(() => {
       mapInstance.resize();
-      const existing = vehicleMarkersRef.current[selectedVehicle.id];
+      const existing = vehicleStateRef.current[selectedVehicle.id];
       let lng: number;
       let lat: number;
       if (existing) {
@@ -2054,6 +2237,27 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
           >
             <Crosshair className="w-4 h-4" />
           </button>
+          {onRequestLocation && (
+            <button
+              type="button"
+              onClick={onRequestLocation}
+              disabled={isLocating}
+              data-testid="map-locate-me-btn"
+              aria-label={t('map.locateMeAria')}
+              title={isLocating ? t('map.locatingTitle') : t('map.locateMeTitle')}
+              className={`w-10 h-10 sm:w-9 sm:h-9 flex items-center justify-center transition-colors ${
+                userLocation
+                  ? 'text-sky-400 hover:bg-slate-800'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              {isLocating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <LocateFixed className="w-4 h-4" />
+              )}
+            </button>
+          )}
         </div>
 
         <div className="flex flex-col rounded-xl overflow-hidden bg-[#0F1522]/94 border border-slate-700/75 shadow-xl ring-1 ring-white/[0.04] backdrop-blur-md divide-y divide-slate-800/80">
@@ -2164,6 +2368,43 @@ export const TransitMap: React.FC<TransitMapProps> = React.memo(({
                 </span>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {/* Desktop Floating GPU Vehicle Hover Tooltip */}
+      {(() => {
+        if (!hoveredVehicle) return null;
+        const entry = vehicleStateRef.current[hoveredVehicle.vehicleId];
+        if (!entry) return null;
+        const v = entry.vehicle;
+        const containerW = containerRef.current?.clientWidth || 800;
+        const containerH = containerRef.current?.clientHeight || 600;
+        const left = Math.min(Math.max(12, hoveredVehicle.x + 16), Math.max(12, containerW - 256));
+        const top = Math.min(Math.max(56, hoveredVehicle.y - 16), Math.max(56, containerH - 80));
+
+        return (
+          <div
+            data-testid="vehicle-hover-tooltip"
+            style={{ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` }}
+            className="hidden md:block pointer-events-none absolute z-30 max-w-64 rounded-lg bg-[#0F1522]/96 border border-slate-700/90 backdrop-blur-md shadow-2xl px-3 py-2 text-xs"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <RouteBadge
+                shortName={v.routeShortName}
+                color={v.routeColor}
+                textColor={v.routeTextColor}
+                size="xs"
+              />
+              <span className="font-display font-semibold text-white truncate">
+                → {formatShortStationLabel(v.headsign)}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-300 mt-1 truncate">
+              {t('sidebar.nextStopPrefix', {
+                stop: formatShortStationLabel(v.nextStopName),
+              })}
+            </div>
           </div>
         );
       })()}

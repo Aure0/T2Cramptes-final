@@ -1,15 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
 import { fetchRoutePunctualityData } from '../services/transitClient';
@@ -28,64 +17,64 @@ interface RoutePunctualityChartProps {
 
 type ChartMode = 'early-late' | 'full-split';
 
-interface CustomTooltipProps {
-  active?: boolean;
-  payload?: Array<{ payload: PunctualityBucket }>;
+interface LocalizedBucket extends PunctualityBucket {
+  displayLabel: string;
 }
 
-const PunctualityTooltip: React.FC<CustomTooltipProps> = ({ active, payload }) => {
-  const { locale, t } = useI18n();
-  if (!active || !payload || payload.length === 0) return null;
-  const bucket = payload[0].payload;
+const CHART_HEIGHT = 212;
+const PAD_TOP = 10;
+const PAD_RIGHT = 10;
+const PAD_BOTTOM = 26;
+const PAD_LEFT = 32;
 
-  return (
-    <div className="rounded-lg bg-[#090D16]/95 border border-slate-700/90 px-3 py-2.5 shadow-xl text-xs space-y-1.5 min-w-[170px]">
-      <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-1">
-        <span className="font-medium text-white">
-          {localizePunctualityLabel(bucket.label, locale)}
-        </span>
-        <span className="text-[10px] text-slate-400">
-          {bucket.source === 'live'
-            ? t('punctuality.sourceLive')
-            : t('punctuality.sourceBaseline')}
-        </span>
-      </div>
-      <div className="space-y-1 font-mono-tabular">
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-emerald-400">{t('punctuality.onTime')}</span>
-          <span className="text-slate-100 font-medium">{bucket.onTimePct.toFixed(1)}%</span>
-        </div>
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-amber-400">{t('punctuality.late')}</span>
-          <span className="text-slate-100 font-medium">{bucket.latePct.toFixed(1)}%</span>
-        </div>
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-sky-400">{t('punctuality.early')}</span>
-          <span className="text-slate-100 font-medium">{bucket.earlyPct.toFixed(1)}%</span>
-        </div>
-      </div>
-      <div className="pt-1 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400 font-mono-tabular">
-        <span>
-          {t('punctuality.avgLabel', {
-            value: formatAvgDelaySeconds(bucket.avgDelaySec, locale),
-          })}
-        </span>
-        <span>n={bucket.sampleCount.toLocaleString(locale === 'fr' ? 'fr-FR' : 'en-US')}</span>
-      </div>
-    </div>
-  );
-};
+function buildSmoothLinePath(points: Array<{ x: number; y: number }>): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+
+  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
 
 export const RoutePunctualityChart: React.FC<RoutePunctualityChartProps> = React.memo(({
   routeId,
   routeShortName,
 }) => {
   const { locale, t } = useI18n();
+  const uid = useId().replace(/:/g, '');
   const [period, setPeriod] = useState<PunctualityPeriod>('24h');
   const [chartMode, setChartMode] = useState<ChartMode>('early-late');
   const [data, setData] = useState<RoutePunctualityResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [chartWidth, setChartWidth] = useState(330);
+  const chartBoxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = chartBoxRef.current;
+    if (!el) return;
+    const measure = () => {
+      const next = Math.round(el.clientWidth);
+      if (next > 120) setChartWidth(next);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [data]);
 
   const periodOptions = useMemo<
     Array<{ id: PunctualityPeriod; label: string; title: string }>
@@ -108,6 +97,7 @@ export const RoutePunctualityChart: React.FC<RoutePunctualityChartProps> = React
         const json = await fetchRoutePunctualityData(routeId, period, signal);
         if (!signal?.aborted) {
           setData(json);
+          setHoverIdx(null);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -129,16 +119,110 @@ export const RoutePunctualityChart: React.FC<RoutePunctualityChartProps> = React
     return () => controller.abort();
   }, [loadPunctuality]);
 
-  const xInterval =
-    period === '24h' ? 3 : period === '30d' ? 2 : period === '6h' ? 2 : period === 'all' ? 1 : 0;
-
-  const localizedBuckets = useMemo(() => {
+  const localizedBuckets = useMemo<LocalizedBucket[]>(() => {
     if (!data) return [];
     return data.buckets.map((b) => ({
       ...b,
       displayLabel: localizePunctualityLabel(b.label, locale),
     }));
   }, [data, locale]);
+
+  const innerW = Math.max(80, chartWidth - PAD_LEFT - PAD_RIGHT);
+  const innerH = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM;
+
+  const yMax = useMemo(() => {
+    if (chartMode === 'full-split') return 100;
+    let peak = 20;
+    for (const b of localizedBuckets) {
+      if (b.latePct > peak) peak = b.latePct;
+      if (b.earlyPct > peak) peak = b.earlyPct;
+    }
+    return Math.min(100, Math.max(25, Math.ceil(peak / 10) * 10));
+  }, [chartMode, localizedBuckets]);
+
+  const yTicks = useMemo(() => {
+    const steps = 4;
+    const out: number[] = [];
+    for (let i = 0; i <= steps; i++) {
+      out.push(Math.round((yMax * i) / steps));
+    }
+    return out;
+  }, [yMax]);
+
+  const xStepEvery = useMemo(() => {
+    const n = localizedBuckets.length;
+    if (n <= 7) return 1;
+    if (n <= 12) return 2;
+    if (n <= 20) return 3;
+    return 4;
+  }, [localizedBuckets.length]);
+
+  const xAt = useCallback(
+    (idx: number) => {
+      const n = localizedBuckets.length;
+      if (n <= 1) return PAD_LEFT + innerW / 2;
+      if (chartMode === 'full-split') {
+        const slot = innerW / n;
+        return PAD_LEFT + slot * (idx + 0.5);
+      }
+      return PAD_LEFT + (idx / (n - 1)) * innerW;
+    },
+    [localizedBuckets.length, innerW, chartMode]
+  );
+
+  const yAt = useCallback(
+    (pct: number) => {
+      const clamped = Math.max(0, Math.min(yMax, pct));
+      return PAD_TOP + innerH * (1 - clamped / yMax);
+    },
+    [yMax, innerH]
+  );
+
+  const areaGeometry = useMemo(() => {
+    if (chartMode !== 'early-late' || localizedBuckets.length === 0) return null;
+    const latePts = localizedBuckets.map((b, i) => ({ x: xAt(i), y: yAt(b.latePct) }));
+    const earlyPts = localizedBuckets.map((b, i) => ({ x: xAt(i), y: yAt(b.earlyPct) }));
+    const baselineY = PAD_TOP + innerH;
+
+    const lateLine = buildSmoothLinePath(latePts);
+    const earlyLine = buildSmoothLinePath(earlyPts);
+    const firstX = latePts[0].x.toFixed(1);
+    const lastX = latePts[latePts.length - 1].x.toFixed(1);
+
+    return {
+      latePts,
+      earlyPts,
+      lateLine,
+      earlyLine,
+      lateArea: `${lateLine} L ${lastX} ${baselineY.toFixed(1)} L ${firstX} ${baselineY.toFixed(1)} Z`,
+      earlyArea: `${earlyLine} L ${lastX} ${baselineY.toFixed(1)} L ${firstX} ${baselineY.toFixed(1)} Z`,
+    };
+  }, [chartMode, localizedBuckets, xAt, yAt, innerH]);
+
+  const handlePointerMove = useCallback(
+    (e: React.MouseEvent<SVGSVGElement> | React.TouchEvent<SVGSVGElement>) => {
+      if (localizedBuckets.length === 0) return;
+      const svg = e.currentTarget;
+      const rect = svg.getBoundingClientRect();
+      const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+      if (typeof clientX !== 'number') return;
+      const relX = clientX - rect.left - PAD_LEFT;
+      const frac = Math.max(0, Math.min(1, relX / innerW));
+      const idx =
+        chartMode === 'full-split'
+          ? Math.min(localizedBuckets.length - 1, Math.floor(frac * localizedBuckets.length))
+          : Math.round(frac * (localizedBuckets.length - 1));
+      setHoverIdx(idx);
+    },
+    [localizedBuckets.length, innerW, chartMode]
+  );
+
+  const hoveredBucket =
+    hoverIdx !== null && hoverIdx >= 0 && hoverIdx < localizedBuckets.length
+      ? localizedBuckets[hoverIdx]
+      : null;
+
+  const hoveredX = hoverIdx !== null ? xAt(hoverIdx) : 0;
 
   return (
     <div
@@ -234,7 +318,7 @@ export const RoutePunctualityChart: React.FC<RoutePunctualityChartProps> = React
             isLoading ? 'opacity-70' : 'opacity-100'
           }`}
         >
-          {/* Flat 3-column KPI Summary Strip (no nested cards) */}
+          {/* Flat 3-column KPI Summary Strip */}
           <div className="grid grid-cols-3 divide-x divide-slate-800/70 border-b border-slate-800/70">
             <div className="px-4 py-3">
               <div className="text-[11px] text-slate-400">{t('punctuality.onTime')}</div>
@@ -256,117 +340,235 @@ export const RoutePunctualityChart: React.FC<RoutePunctualityChartProps> = React
             </div>
           </div>
 
-          {/* Chart Canvas */}
+          {/* Zero-dependency Native Responsive SVG Chart */}
           <div className="px-3 pt-4 pb-2 border-b border-slate-800/70">
-            <div className="w-full h-[215px]" data-testid="recharts-punctuality-canvas">
-              <ResponsiveContainer width="100%" height={215}>
-                {chartMode === 'early-late' ? (
-                  <AreaChart
-                    data={localizedBuckets}
-                    margin={{ top: 6, right: 8, left: -18, bottom: 0 }}
-                  >
-                    <defs>
-                      <linearGradient id="t2cLateFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.35} />
-                        <stop offset="95%" stopColor="#F59E0B" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="t2cEarlyFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#38BDF8" stopOpacity={0.32} />
-                        <stop offset="95%" stopColor="#38BDF8" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="#1E293B"
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="displayLabel"
-                      interval={xInterval}
-                      tick={{ fill: '#94A3B8', fontSize: 10 }}
-                      axisLine={{ stroke: '#1E293B' }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      unit="%"
-                      domain={[0, 'auto']}
-                      tick={{ fill: '#94A3B8', fontSize: 10 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <Tooltip content={<PunctualityTooltip />} />
-                    <Area
-                      type="monotone"
-                      dataKey="latePct"
-                      name={t('punctuality.latePct')}
+            <div
+              ref={chartBoxRef}
+              className="relative w-full h-[212px] select-none"
+              data-testid="svg-punctuality-canvas"
+            >
+              <svg
+                width={chartWidth}
+                height={CHART_HEIGHT}
+                viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}
+                role="img"
+                aria-label={t('punctuality.lineHeader', { line: routeShortName })}
+                onMouseMove={handlePointerMove}
+                onTouchMove={handlePointerMove}
+                onMouseLeave={() => setHoverIdx(null)}
+                className="w-full h-full overflow-visible"
+              >
+                <defs>
+                  <linearGradient id={`lateFill-${uid}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.36} />
+                    <stop offset="95%" stopColor="#F59E0B" stopOpacity={0.02} />
+                  </linearGradient>
+                  <linearGradient id={`earlyFill-${uid}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#38BDF8" stopOpacity={0.32} />
+                    <stop offset="95%" stopColor="#38BDF8" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+
+                {/* Horizontal Gridlines & Y-Axis Labels */}
+                {yTicks.map((tick) => {
+                  const y = yAt(tick);
+                  return (
+                    <g key={tick}>
+                      <line
+                        x1={PAD_LEFT}
+                        x2={chartWidth - PAD_RIGHT}
+                        y1={y}
+                        y2={y}
+                        stroke="#1E293B"
+                        strokeDasharray={tick === 0 ? undefined : '3 3'}
+                        strokeWidth={1}
+                      />
+                      <text
+                        x={PAD_LEFT - 6}
+                        y={y + 3}
+                        textAnchor="end"
+                        fill="#94A3B8"
+                        fontSize={10}
+                        className="font-mono-tabular"
+                      >
+                        {tick}%
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Early / Late Smooth Area Series */}
+                {chartMode === 'early-late' && areaGeometry && (
+                  <g>
+                    <path d={areaGeometry.lateArea} fill={`url(#lateFill-${uid})`} />
+                    <path d={areaGeometry.earlyArea} fill={`url(#earlyFill-${uid})`} />
+                    <path
+                      d={areaGeometry.lateLine}
+                      fill="none"
                       stroke="#F59E0B"
                       strokeWidth={2}
-                      fill="url(#t2cLateFill)"
-                      isAnimationActive={false}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
-                    <Area
-                      type="monotone"
-                      dataKey="earlyPct"
-                      name={t('punctuality.earlyPct')}
+                    <path
+                      d={areaGeometry.earlyLine}
+                      fill="none"
                       stroke="#38BDF8"
                       strokeWidth={2}
-                      fill="url(#t2cEarlyFill)"
-                      isAnimationActive={false}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
-                  </AreaChart>
-                ) : (
-                  <BarChart
-                    data={localizedBuckets}
-                    margin={{ top: 6, right: 8, left: -18, bottom: 0 }}
-                  >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="#1E293B"
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="displayLabel"
-                      interval={xInterval}
-                      tick={{ fill: '#94A3B8', fontSize: 10 }}
-                      axisLine={{ stroke: '#1E293B' }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      unit="%"
-                      domain={[0, 100]}
-                      tick={{ fill: '#94A3B8', fontSize: 10 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <Tooltip content={<PunctualityTooltip />} />
-                    <Bar
-                      dataKey="onTimePct"
-                      stackId="punctuality"
-                      name={t('punctuality.onTimePct')}
-                      fill="#10B981"
-                      isAnimationActive={false}
-                    />
-                    <Bar
-                      dataKey="earlyPct"
-                      stackId="punctuality"
-                      name={t('punctuality.earlyPct')}
-                      fill="#38BDF8"
-                      isAnimationActive={false}
-                    />
-                    <Bar
-                      dataKey="latePct"
-                      stackId="punctuality"
-                      name={t('punctuality.latePct')}
-                      fill="#F59E0B"
-                      radius={[2, 2, 0, 0]}
-                      isAnimationActive={false}
-                    />
-                  </BarChart>
+                    {hoverIdx !== null && areaGeometry.latePts[hoverIdx] && (
+                      <>
+                        <line
+                          x1={hoveredX}
+                          x2={hoveredX}
+                          y1={PAD_TOP}
+                          y2={PAD_TOP + innerH}
+                          stroke="#475569"
+                          strokeWidth={1}
+                          strokeDasharray="2 2"
+                        />
+                        <circle
+                          cx={areaGeometry.latePts[hoverIdx].x}
+                          cy={areaGeometry.latePts[hoverIdx].y}
+                          r={3.5}
+                          fill="#F59E0B"
+                          stroke="#090D16"
+                          strokeWidth={1.5}
+                        />
+                        <circle
+                          cx={areaGeometry.earlyPts[hoverIdx].x}
+                          cy={areaGeometry.earlyPts[hoverIdx].y}
+                          r={3.5}
+                          fill="#38BDF8"
+                          stroke="#090D16"
+                          strokeWidth={1.5}
+                        />
+                      </>
+                    )}
+                  </g>
                 )}
-              </ResponsiveContainer>
+
+                {/* Full Split Stacked Bars */}
+                {chartMode === 'full-split' && localizedBuckets.length > 0 && (
+                  <g>
+                    {localizedBuckets.map((b, i) => {
+                      const slot = innerW / localizedBuckets.length;
+                      const barW = Math.max(4, Math.min(24, slot * 0.68));
+                      const x = PAD_LEFT + i * slot + (slot - barW) / 2;
+                      const isHovered = hoverIdx === i;
+
+                      const onTimeH = (Math.max(0, b.onTimePct) / 100) * innerH;
+                      const earlyH = (Math.max(0, b.earlyPct) / 100) * innerH;
+                      const lateH = (Math.max(0, b.latePct) / 100) * innerH;
+
+                      const yOnTime = PAD_TOP + innerH - onTimeH;
+                      const yEarly = yOnTime - earlyH;
+                      const yLate = Math.max(PAD_TOP, yEarly - lateH);
+
+                      return (
+                        <g key={`${b.timestamp}-${i}`} opacity={hoverIdx === null || isHovered ? 1 : 0.62}>
+                          {isHovered && (
+                            <rect
+                              x={x - 2}
+                              y={PAD_TOP}
+                              width={barW + 4}
+                              height={innerH}
+                              rx={2}
+                              fill="rgba(148, 163, 184, 0.1)"
+                            />
+                          )}
+                          <rect x={x} y={yOnTime} width={barW} height={onTimeH} fill="#10B981" />
+                          <rect x={x} y={yEarly} width={barW} height={earlyH} fill="#38BDF8" />
+                          <rect
+                            x={x}
+                            y={yLate}
+                            width={barW}
+                            height={Math.max(0, yEarly - yLate)}
+                            rx={1.5}
+                            fill="#F59E0B"
+                          />
+                        </g>
+                      );
+                    })}
+                  </g>
+                )}
+
+                {/* X-Axis Labels */}
+                {localizedBuckets.map((b, i) => {
+                  const isLast = i === localizedBuckets.length - 1;
+                  if (i % xStepEvery !== 0 && !isLast) return null;
+                  if (isLast && i % xStepEvery !== 0 && i - Math.floor(i / xStepEvery) * xStepEvery < 1) {
+                    return null;
+                  }
+                  return (
+                    <text
+                      key={`x-${i}`}
+                      x={xAt(i)}
+                      y={CHART_HEIGHT - 6}
+                      textAnchor={i === 0 ? 'start' : isLast ? 'end' : 'middle'}
+                      fill="#94A3B8"
+                      fontSize={10}
+                    >
+                      {b.displayLabel}
+                    </text>
+                  );
+                })}
+              </svg>
+
+              {/* Interactive Floating Tooltip */}
+              {hoveredBucket && (
+                <div
+                  style={{
+                    left: hoveredX > chartWidth * 0.56 ? undefined : Math.min(chartWidth - 178, Math.max(8, hoveredX + 10)),
+                    right: hoveredX > chartWidth * 0.56 ? Math.max(8, chartWidth - hoveredX + 10) : undefined,
+                  }}
+                  className="pointer-events-none absolute top-2 z-20 rounded-lg bg-[#090D16]/95 border border-slate-700/90 px-3 py-2 shadow-xl text-xs space-y-1.5 min-w-[168px]"
+                >
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-1">
+                    <span className="font-medium text-white">{hoveredBucket.displayLabel}</span>
+                    <span className="text-[10px] text-slate-400">
+                      {hoveredBucket.source === 'live'
+                        ? t('punctuality.sourceLive')
+                        : t('punctuality.sourceBaseline')}
+                    </span>
+                  </div>
+                  <div className="space-y-1 font-mono-tabular">
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-emerald-400">{t('punctuality.onTime')}</span>
+                      <span className="text-slate-100 font-medium">
+                        {hoveredBucket.onTimePct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-amber-400">{t('punctuality.late')}</span>
+                      <span className="text-slate-100 font-medium">
+                        {hoveredBucket.latePct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-sky-400">{t('punctuality.early')}</span>
+                      <span className="text-slate-100 font-medium">
+                        {hoveredBucket.earlyPct.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="pt-1 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400 font-mono-tabular">
+                    <span>
+                      {t('punctuality.avgLabel', {
+                        value: formatAvgDelaySeconds(hoveredBucket.avgDelaySec, locale),
+                      })}
+                    </span>
+                    <span>
+                      n={hoveredBucket.sampleCount.toLocaleString(locale === 'fr' ? 'fr-FR' : 'en-US')}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Clean inline legend (unboxed text + color swatches) */}
+            {/* Clean inline legend */}
             <div className="flex items-center justify-center gap-4 pt-2 pb-1 text-[11px] text-slate-400">
               {chartMode === 'full-split' && (
                 <span className="inline-flex items-center gap-1.5">

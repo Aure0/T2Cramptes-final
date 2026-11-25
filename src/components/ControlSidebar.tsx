@@ -1,12 +1,24 @@
 import React, { useDeferredValue, useMemo, useState } from 'react';
-import { AlertTriangle, Bus, MapPin, Navigation, Star, TramFront, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Bus,
+  Loader2,
+  LocateFixed,
+  MapPin,
+  Navigation,
+  Star,
+  TramFront,
+  X,
+} from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
+import type { GeolocationErrorCode, UserLocationPoint } from '../hooks/useGeolocation';
 import type {
   LiveVehicle,
   RouteTier,
   TransitRoute,
   TransitStation,
 } from '../types/transit';
+import { findNearbyStations, formatDistanceLabel } from '../utils/nearbyStops';
 import {
   formatDelayStatus,
   formatEtaCountdown,
@@ -40,6 +52,10 @@ interface ControlSidebarProps {
   isLoadingNetwork: boolean;
   onCloseMobile?: () => void;
   mobileFooter?: React.ReactNode;
+  userLocation?: UserLocationPoint | null;
+  isLocating?: boolean;
+  locationError?: GeolocationErrorCode | null;
+  onRequestLocation?: () => void;
 }
 
 const TIER_IDS: Array<'all' | RouteTier> = ['all', 'core', 'essential', 'secondary', 'local'];
@@ -67,6 +83,10 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = React.memo(({
   isLoadingNetwork,
   onCloseMobile,
   mobileFooter,
+  userLocation = null,
+  isLocating = false,
+  locationError = null,
+  onRequestLocation,
 }) => {
   const { locale, t } = useI18n();
   const [tierFilter, setTierFilter] = useState<'all' | RouteTier>('all');
@@ -153,6 +173,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = React.memo(({
       })
       .slice(0, 120);
   }, [stations, favoriteStationIds, normalizedQuery, enabledRouteIds, normalizedStationSearch]);
+
+  const nearbyStations = useMemo(() => {
+    if (!userLocation || normalizedQuery) return [];
+    return findNearbyStations(userLocation, stations, { limit: 5, maxDistanceMeters: 2500 });
+  }, [userLocation, stations, normalizedQuery]);
 
   const filteredVehicles = useMemo(() => {
     return vehicles.filter((v) => {
@@ -482,11 +507,111 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = React.memo(({
                     count: pinnedStations.length + filteredStations.length,
                   })}
             </span>
-            <span className="text-[11px] text-slate-500 whitespace-nowrap shrink-0">
-              {t('sidebar.clickForArrivals')}
-            </span>
+            {onRequestLocation ? (
+              <button
+                type="button"
+                onClick={onRequestLocation}
+                disabled={isLocating}
+                data-testid="sidebar-locate-btn"
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-colors whitespace-nowrap shrink-0 ${
+                  userLocation
+                    ? 'bg-sky-500/15 text-sky-300 border-sky-500/40 hover:bg-sky-500/25'
+                    : 'bg-slate-900/80 text-slate-300 border-slate-700/80 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                {isLocating ? (
+                  <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+                ) : (
+                  <LocateFixed className="w-3 h-3" aria-hidden="true" />
+                )}
+                <span>{isLocating ? t('sidebar.locatingBtn') : t('sidebar.locateBtn')}</span>
+              </button>
+            ) : (
+              <span className="text-[11px] text-slate-500 whitespace-nowrap shrink-0">
+                {t('sidebar.clickForArrivals')}
+              </span>
+            )}
           </div>
+          {locationError && (
+            <div className="px-4 py-2 bg-rose-500/10 border-b border-rose-500/25 text-[11px] text-rose-300">
+              {locationError === 'denied'
+                ? t('sidebar.gpsDenied')
+                : t('sidebar.gpsUnavailable')}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto transit-scroll">
+            {userLocation && !normalizedQuery && (
+              <div
+                data-testid="sidebar-nearby-stops"
+                className="border-b border-slate-800/80 bg-[#0A1324]/80"
+              >
+                <div className="px-4 py-1.5 flex items-center justify-between text-[11px] font-medium text-sky-300 border-b border-slate-800/60">
+                  <span className="inline-flex items-center gap-1.5">
+                    <LocateFixed className="w-3 h-3 text-sky-400" aria-hidden="true" />
+                    {t('sidebar.nearMeTitle')}
+                  </span>
+                  <span className="font-mono-tabular text-slate-400">{nearbyStations.length}</span>
+                </div>
+                {nearbyStations.length === 0 ? (
+                  <div className="px-4 py-2.5 text-[11px] text-slate-400">
+                    {t('sidebar.noNearbyStops')}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-800/60">
+                    {nearbyStations.map(({ station, distanceMeters, walkMinutes }) => {
+                      const isSelected = station.id === selectedStationId;
+                      return (
+                        <button
+                          key={`nearby-${station.id}`}
+                          type="button"
+                          onClick={() => {
+                            onSelectStation(station);
+                            onCloseMobile?.();
+                          }}
+                          className={`w-full flex items-start gap-2.5 px-4 py-2.5 text-left transition-colors ${
+                            isSelected
+                              ? 'bg-sky-500/15 text-white'
+                              : 'hover:bg-slate-800/45 text-slate-200'
+                          }`}
+                        >
+                          <MapPin
+                            className="w-3.5 h-3.5 mt-0.5 shrink-0 text-sky-400"
+                            aria-hidden="true"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-medium truncate">
+                                {formatShortStationLabel(station.name)}
+                              </span>
+                              <span className="font-mono-tabular text-[10px] text-sky-300 whitespace-nowrap shrink-0">
+                                {formatDistanceLabel(distanceMeters, locale)} ·{' '}
+                                {t('sidebar.walkMin', { mins: walkMinutes })}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                              {station.routeIds.slice(0, 6).map((rid) => {
+                                const r = routeById[rid];
+                                if (!r) return null;
+                                return (
+                                  <RouteBadge
+                                    key={rid}
+                                    shortName={r.shortName}
+                                    color={r.color}
+                                    textColor={r.textColor}
+                                    size="xs"
+                                  />
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {pinnedStations.length > 0 && (
               <div className="border-b border-slate-800/80 bg-[#0B101C]/70">
                 <div className="px-4 py-1.5 flex items-center justify-between text-[11px] font-medium text-amber-300/90 border-b border-slate-800/60">

@@ -38,8 +38,9 @@ jobs:
           VITE_BASE_PATH: './'
           VITE_STATIC_MODE: 'true'
           VITE_GITHUB_REPO: ${{ github.repository }}
-          # Optional: set VITE_API_BASE_URL in Repository Variables if you also host server.ts
+          # Optional: set VITE_API_BASE_URL or VITE_ALERTS_PROXY_URL in Repository Variables
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_ALERTS_PROXY_URL: ${{ vars.VITE_ALERTS_PROXY_URL }}
           VITE_ANDROID_APK_URL: ${{ vars.VITE_ANDROID_APK_URL }}
         run: npm run build:pages
 

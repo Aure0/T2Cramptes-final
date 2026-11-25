@@ -5,17 +5,17 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Keep Capacitor core bridge & plugin reflection classes under R8
+-keep class com.getcapacitor.** { *; }
+-keep class fr.clermont.t2clive.MainActivity { *; }
+-keep class fr.clermont.t2clive.T2CWidgetProvider { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep WebView @JavascriptInterface bridge methods
+-keepattributes *Annotation*
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Preserve line numbers for readable crash traces
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

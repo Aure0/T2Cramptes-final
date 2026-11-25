@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getServiceAlerts, getStaticStore } from '../server/t2cService.ts';
+import { encodeStaticIndexV2 } from '../src/utils/staticIndexCodec.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.resolve(__dirname, '..', 'dist');
@@ -25,37 +26,18 @@ async function main() {
   const networkPath = path.join(DATA_DIR, 'network.json');
   fs.writeFileSync(networkPath, JSON.stringify(slimSnapshot), 'utf8');
 
-  // 2. Write compact browser static index (platforms + deduplicated display shapes + directional branch shapes)
-  const platforms: Record<string, [string, string, number, number]> = {};
-  for (const [stopId, p] of store.platformsById.entries()) {
-    platforms[stopId] = [
-      p.parentStationId,
-      p.name,
-      Number(p.lat.toFixed(6)),
-      Number(p.lng.toFixed(6)),
-    ];
-  }
-
-  const displayShapesByRoute: Record<string, [number, number][][]> = {};
-  for (const route of store.snapshot.routes) {
-    displayShapesByRoute[route.id] = route.shapes.map((poly) =>
-      poly.map((pt) => [Number(pt.lat.toFixed(6)), Number(pt.lng.toFixed(6))])
-    );
-  }
-
-  const shapesByRouteDir: Record<string, [number, number][][]> = {};
-  for (const [key, list] of store.shapesByRouteDir.entries()) {
-    shapesByRouteDir[key] = list.map((pts) =>
-      pts.map((pt) => [Number(pt.lat.toFixed(6)), Number(pt.lng.toFixed(6))])
-    );
-  }
+  // 2. Write compact v2 browser static index (precision-5 deduplicated polylines)
+  const displayShapesByRoute = new Map(
+    store.snapshot.routes.map((route) => [route.id, route.shapes])
+  );
+  const compactV2 = encodeStaticIndexV2({
+    platforms: store.platformsById,
+    displayShapesByRoute,
+    shapesByRouteDir: store.shapesByRouteDir,
+  });
 
   const indexPath = path.join(DATA_DIR, 'static-index.json');
-  fs.writeFileSync(
-    indexPath,
-    JSON.stringify({ platforms, displayShapesByRoute, shapesByRouteDir }),
-    'utf8'
-  );
+  fs.writeFileSync(indexPath, JSON.stringify(compactV2), 'utf8');
 
   // 3. Export latest T2C Service Alerts & Disruption History snapshot
   console.log('[Pages Export] Fetching official T2C SIV Service Alerts...');

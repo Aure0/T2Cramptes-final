@@ -1,0 +1,3 @@
+name = "t2c-siv-alerts-proxy"
+main = "t2c-siv-proxy.js"
+compatibility_date = "2025-01-01"

@@ -4,4 +4,8 @@
     <string name="title_activity_main">T2Cramptés</string>
     <string name="package_name">fr.clermont.t2clive</string>
     <string name="custom_url_scheme">fr.clermont.t2clive</string>
+    <string name="widget_title">T2Cramptés</string>
+    <string name="widget_subtitle">Tram A • BHNS B &amp; C • Bus</string>
+    <string name="widget_description">Accès direct au réseau T2C Clermont-Ferrand en temps réel</string>
+    <string name="widget_open_cta">Direct</string>
 </resources>

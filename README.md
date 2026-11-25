@@ -9,17 +9,17 @@ Suivi en temps réel du réseau **T2C Clermont-Ferrand** (Tramway A, BHNS B & C 
 
 ## Fonctionnalités
 
-- **Carte vectorielle haute fluidité (WebGL)** : MapLibre GL JS + CARTO Vector avec bascule automatique OpenFreeMap / Raster (thèmes Sombre & Clair), fusion aller/retour par ligne, empilement parallèle des tronçons partagés, pôles multi-modes distincts (ex. Jaude Tram / Bus) et arrêts fixes rendus nativement sur GPU.
+- **Carte vectorielle haute fluidité (100 % WebGL GPU)** : MapLibre GL JS + CARTO Vector avec secours OpenFreeMap / Raster (Sombre & Clair), fusion aller/retour, empilement parallèle des tronçons partagés, pôles multi-modes distincts (ex. Jaude Tram / Bus), arrêts fixes et **véhicules rendus sur couche WebGL GPU** avec flèches de direction orientées.
 - **Véhicules en direct & suivi** : flux officiel GTFS-RT T2C (`transport.data.gouv.fr`) actualisé toutes les 12 s, projection exacte sur le tracé, interpolation curviligne 30 fps avec cap lissé et suivi caméra à zone morte.
-- **Horaires en temps réel aux arrêts** : prochains passages, retard/avance, accessibilité PMR, favoris persistants et liens partageables (`?lines=A,B&station=…`).
-- **Infos trafic, densité & ponctualité** : perturbations T2C SIV + historique, carte de chaleur de congestion/volume et graphiques de ponctualité par ligne (`6H` / `24H` / `7J` / `30J` / `Tout`).
+- **Autour de moi (GPS), horaires par direction & alertes d'approche** : localisation de l'utilisateur et tri des arrêts les plus proches avec temps de marche, regroupement des prochains départs par terminus/direction ou chronologique, rappel 5 minutes avant l'arrivée (notification + vibration), favoris persistants et liens partageables (`?lines=A,B&station=…`).
+- **Infos trafic, densité & ponctualité** : perturbations T2C SIV + historique, indicateur de fraîcheur de la topologie GTFS, carte de chaleur de congestion/volume et graphiques SVG natifs de ponctualité par ligne (`6H` / `24H` / `7J` / `30J` / `Tout`).
 - **Interface FR / EN & raccourcis clavier** : `/` recherche, `↑↓` + `Entrée`, `L` noms des arrêts, `D` densité, `M` fond de carte, `Espace` pause, `1/2/3` onglets, `Échap` fermer.
 
 ---
 
-## Application Android (APK & PWA)
+## Application Android (APK, Widget & PWA)
 
-- **APK natif (recommandé)** : téléchargez `T2Cramptes-latest.apk` depuis la page [Releases](https://github.com/aure0/t2cramptes-android/releases/latest). Chaque push sur `main` recompile et met à jour automatiquement la release `latest` via `.github/workflows/build-android-apk.yml`.
+- **APK natif (recommandé)** : téléchargez `T2Cramptes-latest.apk` depuis la page [Releases](https://github.com/aure0/t2cramptes-android/releases/latest). Inclut un **widget d'écran d'accueil Android**, la vérification intégrée des mises à jour et le support GPS. Chaque push sur `main` (ou déclenchement manuel) recompile et met à jour la release `latest` via `.github/workflows/build-android-apk.yml`.
 - **Installation instantanée (PWA)** : ouvrez la version web dans Chrome sur Android puis touchez **Installer l'application** (mode plein écran + cache hors ligne Workbox).
 
 ---
@@ -36,7 +36,7 @@ npm run lint       # Vérification TypeScript (tsc --noEmit)
 ### Builds de production
 
 ```bash
-# Build statique GitHub Pages (pré-exporte GTFS + alertes dans dist/data/)
+# Build statique GitHub Pages (exporte un index GTFS compacté Polyline dans dist/data/)
 npm run build:pages
 npx vite preview --port 4173
 
@@ -51,10 +51,13 @@ npx cap open android
 
 | Couche | Technologie / Source |
 | --- | --- |
-| Front-end | React 19, TypeScript, Tailwind CSS v4, Vite, Workbox PWA |
-| Cartographie | MapLibre GL JS (couches GeoJSON WebGL) + CARTO Vector (secours OpenFreeMap & Raster) |
+| Front-end | React 19, TypeScript, Tailwind CSS v4, graphiques SVG natifs, Vite, Workbox PWA |
+| Cartographie | MapLibre GL JS (tracés, arrêts et véhicules 100 % couches WebGL) + CARTO / OpenFreeMap / Raster |
 | Données temps réel | GTFS-RT TripUpdates (`proxy.transport.data.gouv.fr`) — décodé côté client en mode statique |
-| Topologie & alertes | GTFS statique T2C + SIV T2C (exportés au build sur `push` ou déclenchement manuel) |
-| Mobile Android | Capacitor 8 + navigation native du bouton Retour |
+| Topologie & alertes | GTFS statique T2C (encodé Polyline v2) + SIV T2C (exportés au build ou proxy temps réel) |
+| Mobile Android | Capacitor 8, widget natif (`T2CWidgetProvider`), minification R8 et vérificateur de mise à jour |
 
-> **Optionnel (alertes SIV en direct)** : déployez `server.ts` sur un hébergeur Node et renseignez la variable de dépôt GitHub `VITE_API_BASE_URL` pour basculer du snapshot statique au polling SIV en direct toutes les 30 s.
+### Options avancées (GitHub Actions)
+
+- **Alertes SIV en direct sans serveur (gratuit)** : déployez `cloudflare-worker/t2c-siv-proxy.js` via `wrangler deploy` (offre gratuite Cloudflare Workers) puis renseignez la variable de dépôt GitHub `VITE_ALERTS_PROXY_URL` (et également `VITE_API_BASE_URL` si vous hébergez `server.ts`).
+- **APK Release signé (R8 minifié)** : ajoutez les secrets GitHub `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` et `ANDROID_KEY_PASSWORD` pour activer automatiquement `assembleRelease` signé ; sinon le workflow produit un APK Debug fonctionnel.

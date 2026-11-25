@@ -12,12 +12,22 @@ import type {
   TransitStation,
   UpcomingStopInfo,
 } from '../types/transit';
+import {
+  buildActiveAlertCountByRoute,
+  mergeAlertsIntoHistory,
+  normalizeT2CSivAlert,
+  type RawT2CSivAlert,
+} from '../utils/alertsMath';
 import { decodeGtfsRtFeedMessage } from '../utils/gtfsRtDecoder';
 import {
   buildPunctualityHistory,
   classifyDelayBucket,
   type LiveRouteObservation,
 } from '../utils/punctualityMath';
+import {
+  decodeStaticIndex,
+  type CompactStaticIndex,
+} from '../utils/staticIndexCodec';
 import {
   resolveLiveFeedClock,
   sliceBestShapeBetweenStops,
@@ -27,16 +37,8 @@ const GTFS_RT_PUBLIC_URL =
   'https://proxy.transport.data.gouv.fr/resource/t2c-clermont-gtfs-rt-trip-update';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+const ALERTS_PROXY_URL = (import.meta.env.VITE_ALERTS_PROXY_URL || '').trim().replace(/\/+$/, '');
 const IS_STATIC_MODE = import.meta.env.VITE_STATIC_MODE === 'true' && !API_BASE_URL;
-
-interface CompactStaticIndex {
-  /** stopId -> [parentStationId, platformName, lat, lng] */
-  platforms: Record<string, [string, string, number, number]>;
-  /** routeId -> deduplicated display polylines [[[lat, lng], ...], ...] */
-  displayShapesByRoute?: Record<string, [number, number][][]>;
-  /** "routeId:directionId" -> [[[lat, lng], ...], ...] (or legacy single polyline [[lat, lng], ...]) */
-  shapesByRouteDir: Record<string, [number, number][][] | [number, number][]>;
-}
 
 interface BrowserStaticCache {
   snapshot: NetworkSnapshot;
@@ -160,6 +162,7 @@ async function ensureBrowserStaticCache(): Promise<BrowserStaticCache> {
 
       const snapshot = (await netRes.json()) as NetworkSnapshot;
       const idx = (await idxRes.json()) as CompactStaticIndex;
+      const decoded = decodeStaticIndex(idx);
 
       const routesById = new Map<string, TransitRoute>();
       for (const r of snapshot.routes) routesById.set(r.id, r);
@@ -167,46 +170,15 @@ async function ensureBrowserStaticCache(): Promise<BrowserStaticCache> {
       const stationsById = new Map<string, TransitStation>();
       for (const s of snapshot.stations) stationsById.set(s.id, s);
 
-      const platformsById = new Map<
-        string,
-        { parentStationId: string; name: string; lat: number; lng: number }
-      >();
-      for (const [stopId, tuple] of Object.entries(idx.platforms || {})) {
-        platformsById.set(stopId, {
-          parentStationId: tuple[0],
-          name: tuple[1],
-          lat: tuple[2],
-          lng: tuple[3],
-        });
-      }
-
-      const shapesByRouteDir = new Map<string, LatLngPoint[][]>();
-      for (const [key, raw] of Object.entries(idx.shapesByRouteDir || {})) {
-        if (!Array.isArray(raw) || raw.length === 0) continue;
-        // Support both new multi-branch format [[[lat, lng], ...], ...] and legacy [[lat, lng], ...]
-        if (Array.isArray(raw[0]) && typeof raw[0][0] === 'number') {
-          shapesByRouteDir.set(key, [
-            (raw as [number, number][]).map(([lat, lng]) => ({ lat, lng })),
-          ]);
-        } else {
-          shapesByRouteDir.set(
-            key,
-            (raw as [number, number][][]).map((poly) =>
-              poly.map(([lat, lng]) => ({ lat, lng }))
-            )
-          );
-        }
-      }
+      const platformsById = decoded.platforms;
+      const shapesByRouteDir = decoded.shapesByRouteDir;
 
       // Rebuild each route's deduplicated display polylines from static-index.json when omitted in network.json
-      const displayMap = idx.displayShapesByRoute || {};
       for (const route of snapshot.routes) {
         if (!Array.isArray(route.shapes) || route.shapes.length === 0) {
-          const preDeduped = displayMap[route.id];
-          if (Array.isArray(preDeduped) && preDeduped.length > 0) {
-            route.shapes = preDeduped.map((poly) =>
-              poly.map(([lat, lng]) => ({ lat, lng }))
-            );
+          const preDeduped = decoded.displayShapesByRoute.get(route.id);
+          if (preDeduped && preDeduped.length > 0) {
+            route.shapes = preDeduped;
           } else {
             const dir0 = shapesByRouteDir.get(`${route.id}:0`) || [];
             const dir1 = shapesByRouteDir.get(`${route.id}:1`) || [];
@@ -556,6 +528,48 @@ export async function fetchRoutePunctualityData(
 
 export async function fetchServiceAlertsData(force = false): Promise<ServiceAlertsResponse> {
   if (IS_STATIC_MODE) {
+    // Optional Cloudflare Worker CORS proxy for live T2C SIV Service Alerts without GitHub cron
+    if (ALERTS_PROXY_URL) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10_000);
+        let proxyRes: Response;
+        try {
+          proxyRes = await fetch(ALERTS_PROXY_URL, {
+            cache: force ? 'no-store' : 'default',
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+        if (proxyRes.ok) {
+          const payload = (await proxyRes.json()) as unknown;
+          // Support either raw T2C SIV JSON array or pre-normalized ServiceAlertsResponse
+          if (Array.isArray(payload)) {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const normalized = (payload as RawT2CSivAlert[])
+              .filter((item) => item && item.id)
+              .map((item) => normalizeT2CSivAlert(item, nowSec));
+            const { activeAlerts, history } = mergeAlertsIntoHistory([], normalized, nowSec, 150);
+            return {
+              fetchedAt: Date.now(),
+              feedTimestamp: nowSec,
+              feedSource: 'T2C ServiceAlerts (SIV + GTFS-RT)',
+              gtfsRtEntityCount: 0,
+              activeAlerts,
+              history,
+              activeAlertCountByRoute: buildActiveAlertCountByRoute(activeAlerts),
+            };
+          }
+          if (payload && typeof payload === 'object' && 'activeAlerts' in payload) {
+            return payload as ServiceAlertsResponse;
+          }
+        }
+      } catch {
+        // Fall through cleanly to bundled alerts.json snapshot
+      }
+    }
+
     const res = await fetch(resolveStaticDataUrl('alerts.json'), {
       cache: force ? 'no-cache' : 'default',
     });

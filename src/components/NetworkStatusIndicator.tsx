@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, RefreshCw, WifiOff } from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
 import type { FeedHealthAssessment } from '../utils/feedHealth';
+import type { GtfsFreshnessStatus } from '../utils/gtfsFreshness';
 import { formatParisClock } from '../utils/transitMath';
 
 interface NetworkStatusIndicatorProps {
@@ -9,6 +10,7 @@ interface NetworkStatusIndicatorProps {
   feedTimestampSec: number | null;
   isRefreshing: boolean;
   onRetry: () => void;
+  gtfsFreshness?: GtfsFreshnessStatus;
 }
 
 export const NetworkStatusIndicator: React.FC<NetworkStatusIndicatorProps> = React.memo(({
@@ -16,6 +18,7 @@ export const NetworkStatusIndicator: React.FC<NetworkStatusIndicatorProps> = Rea
   feedTimestampSec,
   isRefreshing,
   onRetry,
+  gtfsFreshness,
 }) => {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -159,7 +162,27 @@ export const NetworkStatusIndicator: React.FC<NetworkStatusIndicatorProps> = Rea
                 {feedTimestampSec ? formatParisClock(feedTimestampSec, true) : '—'}
               </span>
             </div>
+            {gtfsFreshness && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-400">{t('status.gtfsTopology')}</span>
+                <span
+                  className={`font-mono-tabular font-medium ${
+                    gtfsFreshness.isStale ? 'text-amber-300' : 'text-emerald-300'
+                  }`}
+                >
+                  {gtfsFreshness.isStale
+                    ? t('status.gtfsStale', { days: gtfsFreshness.ageDays })
+                    : t('status.gtfsFresh')}
+                </span>
+              </div>
+            )}
           </div>
+
+          {gtfsFreshness?.isStale && (
+            <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200">
+              {t('status.gtfsStaleNotice', { days: gtfsFreshness.ageDays })}
+            </div>
+          )}
 
           <div className="flex items-center justify-end gap-2">
             <button

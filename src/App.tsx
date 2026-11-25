@@ -21,6 +21,9 @@ import { NetworkStatusIndicator } from './components/NetworkStatusIndicator';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PWAInstallButton, PWAInstallGuideModal } from './components/PWAInstallButton';
 import { RouteBadge } from './components/RouteBadge';
+import { useAppUpdateCheck } from './hooks/useAppUpdateCheck';
+import { useDepartureReminders } from './hooks/useDepartureReminders';
+import { useGeolocation } from './hooks/useGeolocation';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import type {
   LiveTrafficResponse,
@@ -42,6 +45,7 @@ import { filterAlertsByActiveRoutes } from './utils/alertsMath';
 import { resolveAndroidBackAction } from './utils/androidBackNav';
 import { ANDROID_APK_ASSET_NAME } from './utils/apkReleaseUrl';
 import { evaluateFeedHealth } from './utils/feedHealth';
+import { evaluateGtfsFreshness } from './utils/gtfsFreshness';
 import {
   detectBestLocale,
   getBrowserLanguages,
@@ -49,7 +53,11 @@ import {
   type AppLocale,
   type TranslationKey,
 } from './utils/i18n';
-import { formatShortStationLabel, normalizeSearchText } from './utils/transitMath';
+import {
+  formatEtaCountdown,
+  formatShortStationLabel,
+  normalizeSearchText,
+} from './utils/transitMath';
 import {
   buildUrlSearchString,
   loadUserPreferences,
@@ -201,8 +209,10 @@ export default function App() {
   const [alertsDrawerOpen, setAlertsDrawerOpen] = useState(false);
   const [alertsDrawerRouteFilter, setAlertsDrawerRouteFilter] = useState<string | null>(null);
 
-  // Android / PWA installation state
+  // Android / PWA installation, GPS Around Me, departure reminders & Android update checker
   const pwaInstall = usePWAInstall();
+  const geolocation = useGeolocation();
+  const appUpdate = useAppUpdateCheck();
   const [installGuideOpen, setInstallGuideOpen] = useState(false);
   const [mobileInstallBannerDismissed, setMobileInstallBannerDismissed] = useState(false);
 
@@ -214,6 +224,8 @@ export default function App() {
   const [isMotionPaused, setIsMotionPaused] = useState(false);
   const [serverClockOffsetSec, setServerClockOffsetSec] = useState<number>(0);
   const nowEpochSec = healthClockMs / 1000 + serverClockOffsetSec;
+
+  const departureReminders = useDepartureReminders(nowEpochSec, locale);
 
   // Load static T2C GTFS network topology once on mount
   const fetchNetwork = useCallback(async () => {
@@ -935,6 +947,11 @@ export default function App() {
     ]
   );
 
+  const gtfsFreshness = useMemo(
+    () => evaluateGtfsFreshness(network?.loadedAt, healthClockMs),
+    [network?.loadedAt, healthClockMs]
+  );
+
   const inspectorOpen = Boolean(selectedStation || selectedVehicle);
   const networkError = networkErrorKey ? t(networkErrorKey) : null;
   const stationError = stationErrorKey ? t(stationErrorKey) : null;
@@ -946,12 +963,6 @@ export default function App() {
         data-locale={locale}
         className="h-[100dvh] w-screen overflow-hidden flex flex-col bg-[#0B0F17] text-slate-100"
       >
-        {/* Official T2C Clermont-Ferrand 2px brand accent ribbon (Tram A Crimson → BHNS B Cobalt) */}
-        <div
-          aria-hidden="true"
-          className="h-[2px] w-full shrink-0 bg-gradient-to-r from-[#AB161B] via-[#C81D25] to-[#0069B4]"
-        />
-
         {/* Top Control Header — clean 3-zone desktop layout + spacious mobile bar */}
         <header className="relative min-h-14 pt-[env(safe-area-inset-top)] shrink-0 px-2.5 sm:px-4 lg:px-5 bg-[#0F1522] border-b border-slate-800/80 flex items-center justify-between gap-1.5 sm:gap-4 z-30">
           {/* Zone 1: Brand Emblem, Title & Subtle Live Feed Health Indicator */}
@@ -982,6 +993,7 @@ export default function App() {
               feedTimestampSec={liveTraffic?.feedTimestamp ?? null}
               isRefreshing={isRefreshingLive}
               onRetry={handleRetryLiveFeed}
+              gtfsFreshness={gtfsFreshness}
             />
           </div>
 
@@ -1522,6 +1534,37 @@ export default function App() {
           </div>
         )}
 
+        {/* Android In-App Update Available Banner (only inside Capacitor APK when newer GitHub Release exists) */}
+        {appUpdate.updateAvailable && appUpdate.downloadUrl && (
+          <div
+            data-testid="android-update-banner"
+            className="shrink-0 px-3.5 py-2 bg-[#0B172A] border-b border-sky-500/35 flex items-center justify-between gap-2 text-xs text-sky-100 z-20"
+          >
+            <span className="truncate font-medium">
+              {t('update.availableText', { version: appUpdate.latestLabel || 'latest' })}
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <a
+                href={appUpdate.downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-sky-500 hover:bg-sky-400 text-slate-950 text-[11px] font-semibold transition-colors whitespace-nowrap"
+              >
+                <Download className="w-3 h-3" aria-hidden="true" />
+                {t('update.downloadCta')}
+              </a>
+              <button
+                type="button"
+                onClick={appUpdate.dismiss}
+                aria-label={t('app.close')}
+                className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Network error banner if static GTFS load failed */}
         {networkError && (
           <div className="px-4 py-2 bg-rose-950/80 border-b border-rose-800/70 flex items-center justify-between gap-3 text-xs text-rose-200 z-20">
@@ -1561,6 +1604,10 @@ export default function App() {
             onSelectVehicle={handleSelectVehicle}
             nowEpochSec={sidebarTab === 'vehicles' ? nowEpochSec : 0}
             isLoadingNetwork={isLoadingNetwork}
+            userLocation={geolocation.location}
+            isLocating={geolocation.isLocating}
+            locationError={geolocation.errorCode}
+            onRequestLocation={geolocation.requestLocation}
           />
         </div>
 
@@ -1595,6 +1642,10 @@ export default function App() {
                 nowEpochSec={sidebarTab === 'vehicles' ? nowEpochSec : 0}
                 isLoadingNetwork={isLoadingNetwork}
                 onCloseMobile={handleCloseMobileDrawer}
+                userLocation={geolocation.location}
+                isLocating={geolocation.isLocating}
+                locationError={geolocation.errorCode}
+                onRequestLocation={geolocation.requestLocation}
                 mobileFooter={
                   pwaInstall.mode !== 'hidden' ? (
                     <PWAInstallButton
@@ -1639,6 +1690,10 @@ export default function App() {
               showDensity={showDensity}
               onToggleDensity={handleToggleDensity}
               feedHealth={feedHealth}
+              userLocation={geolocation.location}
+              isLocating={geolocation.isLocating}
+              locateNonce={geolocation.locateNonce}
+              onRequestLocation={geolocation.requestLocation}
             />
           </Suspense>
         </div>
@@ -1690,11 +1745,56 @@ export default function App() {
                   selectedStation ? favoriteStationIds.has(selectedStation.id) : false
                 }
                 onToggleFavoriteStation={handleToggleFavoriteStation}
+                isReminderArmed={departureReminders.isReminderArmed}
+                onToggleReminder={departureReminders.toggleReminder}
               />
             </div>
           </div>
         )}
       </main>
+
+      {/* Triggered Departure Approach Alert Toast */}
+      {departureReminders.activeTriggeredReminder && (
+        <div
+          role="status"
+          aria-live="assertive"
+          data-testid="departure-reminder-toast"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl bg-[#0F172A]/95 border border-amber-400/55 shadow-2xl backdrop-blur-md px-3.5 py-3 flex items-center gap-3 text-xs"
+        >
+          <RouteBadge
+            shortName={departureReminders.activeTriggeredReminder.routeShortName}
+            color={departureReminders.activeTriggeredReminder.routeColor}
+            textColor={departureReminders.activeTriggeredReminder.routeTextColor}
+            size="sm"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-white truncate">
+              {t('reminder.bannerTitle', {
+                line: departureReminders.activeTriggeredReminder.routeShortName,
+                station: departureReminders.activeTriggeredReminder.stationName,
+              })}
+            </div>
+            <div className="text-[11px] text-amber-200 truncate mt-0.5">
+              {t('reminder.bannerBody', {
+                headsign: departureReminders.activeTriggeredReminder.headsign,
+                eta: formatEtaCountdown(
+                  departureReminders.activeTriggeredReminder.arrivalTime,
+                  nowEpochSec,
+                  locale
+                ),
+              })}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={departureReminders.dismissTriggeredReminder}
+            aria-label={t('app.close')}
+            className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 shrink-0"
+          >
+            <X className="w-4 h-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {/* GTFS-RT / T2C Service Alerts & Disruption History Drawer (code-split) */}
       {alertsDrawerOpen && (
