@@ -4,9 +4,6 @@ on:
   push:
     branches: ['main']
   workflow_dispatch:
-  schedule:
-    # Automatically refresh static T2C GTFS topology & Service Alerts snapshot every 6 hours
-    - cron: '0 */6 * * *'
 
 permissions:
   contents: read
